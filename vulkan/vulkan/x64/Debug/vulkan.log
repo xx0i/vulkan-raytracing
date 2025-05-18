@@ -1,0 +1,6 @@
+﻿  main.cpp
+  GLM_GTX_hash requires C++11 standard library support
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library
+  vulkan.vcxproj -> C:\full sail\vulkan\vulkan\x64\Debug\vulkan.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.
