@@ -19,7 +19,7 @@ void main()
 
 	mat4 invView = inverse(ubo.view);
 	mat4 invProj = inverse(ubo.proj);
- 	vec4 rayOrigin = invView * vec4(0.0, 0.0, 0.0, 1.0);
+ 	vec4 rayOrigin = invView * vec4(0.0, 0.0, 1.0, 1.0);
 
 	vec4 clip = vec4(ndc.x, ndc.y, 1.0, 1.0);
 	vec4 target = invProj * clip;
@@ -30,6 +30,6 @@ void main()
 
 	payload = vec3(1.0, 0.0, 1.0);
 	
-	traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0, rayOrigin.xyz, 0.001, rayDirection, 10000.0, 0);
+	traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0, rayOrigin.xyz, 0.001, rayDirection, 10000.0, 0);
 	imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(payload, 1.0));
 }

@@ -430,9 +430,9 @@ private:
 		createColourResources();
 		createDepthResources();
 		createFrameBuffers();
-		//createTextureImage();
-		//createTextureImageView();
-		//createTextureSampler();
+		createTextureImage();
+		createTextureImageView();
+		createTextureSampler();
 		createStoreImage();
 		createStoreImageView();
 		createAlphaImage();
@@ -440,8 +440,8 @@ private:
 		createAlphaSampler();
 		createComputeImage();
 		createComputeImageView();
-		//loadModel();
-		simpleDraw();
+		loadModel();
+		//simpleDraw();
 		createVertexBuffer();
 		createIndexBuffer();
 		createAccerlerationStructures();
@@ -983,21 +983,28 @@ private:
 		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 		uboLayoutBinding.pImmutableSamplers = nullptr;
 
+		VkDescriptorSetLayoutBinding texSamplerLayoutBinding{};
+		texSamplerLayoutBinding.binding = 3;
+		texSamplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		texSamplerLayoutBinding.descriptorCount = 1;
+		texSamplerLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		texSamplerLayoutBinding.pImmutableSamplers = nullptr;
+
 		VkDescriptorSetLayoutBinding vertexBinding{};
-		vertexBinding.binding = 3;
+		vertexBinding.binding = 4;
 		vertexBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		vertexBinding.descriptorCount = 1;
 		vertexBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
 		VkDescriptorSetLayoutBinding indexBinding{};
-		indexBinding.binding = 4;
+		indexBinding.binding = 5;
 		indexBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		indexBinding.descriptorCount = 1;
 		indexBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		std::array<VkDescriptorSetLayoutBinding, 5> bindings =
+		std::array<VkDescriptorSetLayoutBinding, 6> bindings =
 		{
-			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, vertexBinding, indexBinding
+			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1945,10 +1952,10 @@ private:
 	{
 		vertices =
 		{
-			{{-0.5f, -0.5f, 0.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {0.0f, 0.0f}},
+			{{-0.5f, -0.5f, 0.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {1.0f, 0.0f}},
 			{{ 0.5f, -0.5f, 0.0f}, 0.0f, {0.0f, 1.0f, 0.0f}, 0.0f, {0.0f, 0.0f}},
-			{{ 0.5f,  0.5f, 0.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f}},
-			{{ -0.5f, 0.5f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0.0f, {0.0f, 0.0f}}
+			{{ 0.5f,  0.5f, 0.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 1.0f}},
+			{{ -0.5f, 0.5f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0.0f, {1.0f, 1.0f}}
 		};
 
 		indices = { 0, 1, 2, 2, 3, 0 };
@@ -1981,11 +1988,15 @@ private:
 					attributes.vertices[3 * index.vertex_index + 2]
 				};
 
+				vert._pad0 = 0.0f;
+
 				vert.texCoord =
 				{
 					attributes.texcoords[2 * index.texcoord_index + 0],
 					1.0f - attributes.texcoords[2 * index.texcoord_index + 1]
 				};
+
+				vert._pad1 = 0.0f;
 
 				vert.colour = { 1.0f, 1.0f, 1.0f };
 
@@ -1994,6 +2005,8 @@ private:
 					uniqueVertices[vert] = static_cast<uint32_t>(vertices.size());
 					vertices.push_back(vert);
 				}
+
+				vert._pad2 = { 0.0f, 0.0f };
 
 				indices.push_back(uniqueVertices[vert]);
 			}
@@ -2133,7 +2146,7 @@ private:
 		VkTransformMatrixKHR identityTransform = {
 		{ {1.0f, 0.0f, 0.0f, 0.0f},
 		{0.0f, 1.0f, 0.0f, 0.0f},
-		{0.0f, 0.0f, 1.0f, 3.0f} }
+		{0.0f, 0.0f, 1.0f, 0.0f} }
 		};
 		asInstance.transform = identityTransform;
 
@@ -2258,7 +2271,7 @@ private:
 
 	void createRayTracingDescriptorPool()
 	{
-		std::array<VkDescriptorPoolSize, 6> descriptorPoolSizes{};
+		std::array<VkDescriptorPoolSize, 7> descriptorPoolSizes{};
 		descriptorPoolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 		descriptorPoolSizes[0].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
@@ -2268,14 +2281,17 @@ private:
 		descriptorPoolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		descriptorPoolSizes[2].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
-		descriptorPoolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		descriptorPoolSizes[3].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		descriptorPoolSizes[3].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
-		descriptorPoolSizes[4].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+		descriptorPoolSizes[4].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 		descriptorPoolSizes[4].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
-		descriptorPoolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptorPoolSizes[5].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 2);
+		descriptorPoolSizes[5].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+		descriptorPoolSizes[5].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
+
+		descriptorPoolSizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 2);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2393,6 +2409,11 @@ private:
 			writeAccelerationStructureSet.accelerationStructureCount = 1;
 			writeAccelerationStructureSet.pAccelerationStructures = &tlas;
 
+			VkDescriptorImageInfo samplerImageInfo{};
+			samplerImageInfo.sampler = textureSampler;
+			samplerImageInfo.imageView = textureImageView;
+			samplerImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
 			VkDescriptorBufferInfo vertexBufferInfo{};
 			vertexBufferInfo.buffer = vertexBuffer;
 			vertexBufferInfo.offset = 0;
@@ -2403,7 +2424,7 @@ private:
 			indexBufferInfo.offset = 0;
 			indexBufferInfo.range = sizeof(indices[0]) * indices.size();
 
-			std::array<VkWriteDescriptorSet, 5> writeDescriptorSets{};
+			std::array<VkWriteDescriptorSet, 6> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = rayTracingDescriptorSets[i];
@@ -2432,16 +2453,24 @@ private:
 			writeDescriptorSets[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[3].dstSet = rayTracingDescriptorSets[i];
 			writeDescriptorSets[3].dstBinding = 3;
-			writeDescriptorSets[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[3].dstArrayElement = 0;
+			writeDescriptorSets[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			writeDescriptorSets[3].descriptorCount = 1;
-			writeDescriptorSets[3].pBufferInfo = &vertexBufferInfo;
+			writeDescriptorSets[3].pImageInfo = &samplerImageInfo;
 
 			writeDescriptorSets[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[4].dstSet = rayTracingDescriptorSets[i];
 			writeDescriptorSets[4].dstBinding = 4;
 			writeDescriptorSets[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 			writeDescriptorSets[4].descriptorCount = 1;
-			writeDescriptorSets[4].pBufferInfo = &indexBufferInfo;
+			writeDescriptorSets[4].pBufferInfo = &vertexBufferInfo;
+
+			writeDescriptorSets[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[5].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[5].dstBinding = 5;
+			writeDescriptorSets[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[5].descriptorCount = 1;
+			writeDescriptorSets[5].pBufferInfo = &indexBufferInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -2839,8 +2868,8 @@ private:
 
 		uniformBufferObject ubo{};
 		ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));//glm::mat4(1.0f);
-		ubo.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -3.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.f);
+		ubo.view = glm::lookAt(glm::vec3(0.0f, -1.0f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		ubo.proj = glm::perspective(glm::radians(60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
 		ubo.proj[1][1] *= -1;
 
 		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
