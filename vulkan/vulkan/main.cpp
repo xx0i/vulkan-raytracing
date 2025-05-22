@@ -2146,7 +2146,7 @@ private:
 		VkTransformMatrixKHR identityTransform = {
 		{ {1.0f, 0.0f, 0.0f, 0.0f},
 		{0.0f, 1.0f, 0.0f, 0.0f},
-		{0.0f, 0.0f, 1.0f, 0.0f} }
+		{0.0f, 0.0f, 1.0f, 0.8f} }
 		};
 		asInstance.transform = identityTransform;
 
@@ -2867,9 +2867,20 @@ private:
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
 		uniformBufferObject ubo{};
-		ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));//glm::mat4(1.0f);
-		ubo.view = glm::lookAt(glm::vec3(0.0f, -1.0f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-		ubo.proj = glm::perspective(glm::radians(60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
+		//ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		float radius = 2.5f;
+		float yaw = time * glm::radians(-60.0f);
+
+		float camX = sin(yaw) * radius;
+		float camY = cos(yaw) * radius;
+
+		glm::vec3 cameraPos = glm::vec3(camX, camY, 2.0f);
+		glm::vec3 target = glm::vec3(0.0f, 0.0f, 1.0f);
+		glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
+
+		ubo.view = glm::lookAt(cameraPos, target, up);
+
+		ubo.proj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
 		ubo.proj[1][1] *= -1;
 
 		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -2889,7 +2900,7 @@ private:
 		}
 		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
 		{
-			throw std::runtime_error("fauked to acquire swap chain image");
+			throw std::runtime_error("failed to acquire swap chain image");
 		}
 
 		updateUniformBuffer(currentFrame);

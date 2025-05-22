@@ -5,6 +5,7 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba8) writeonly uniform image2D outputImage;
 layout(set = 0, binding = 2) uniform UniformData
 {
+    mat4 model;
     mat4 view;
     mat4 proj;
 } ubo;
@@ -15,13 +16,13 @@ void main()
 {
 	const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
 	const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
-	vec2 ndc = inUV * 2.0 - 1.0;
+	vec2 ndc = vec2(inUV.x, 1.0 - inUV.y) * 2.0 - 1.0;
 
 	mat4 invView = inverse(ubo.view);
 	mat4 invProj = inverse(ubo.proj);
- 	vec4 rayOrigin = invView * vec4(0.0, 0.0, 1.0, 1.0);
+ 	vec4 rayOrigin = invView * vec4(0.0, 0.0, 0.0, 1.0);
 
-	vec4 clip = vec4(ndc.x, ndc.y, 1.0, 1.0);
+	vec4 clip = vec4(ndc.x, ndc.y, 0.0, 1.0);
 	vec4 target = invProj * clip;
 	target /= target.w;
 
