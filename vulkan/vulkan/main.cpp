@@ -266,6 +266,20 @@ struct uniformBufferObject
 	glm::mat4 proj;
 };
 
+struct camera
+{
+	glm::vec3 position;
+	float yaw;
+	float pitch;
+
+	float speed;
+	float sensitivity;
+
+	glm::vec3 front;
+	glm::vec3 up;
+	glm::vec3 right;
+};
+
 class application
 {
 public:
@@ -392,7 +406,31 @@ private:
 	VkStridedDeviceAddressRegionKHR hitRegion{};
 	VkStridedDeviceAddressRegionKHR callableRegion{};
 
+	camera camera
+	{
+		glm::vec3(1.81692, 0.444658, 1.49269), // position
+		glm::radians(-163.23f),                // yaw
+		glm::radians(-16.86f),				   // pitch
+		2.0f,								   // speed
+		0.001f,                                // sensitivity
+		glm::vec3(0.0f),                       // front (will be set by updateCameraVectors)
+		glm::vec3(0.0f, 0.0f, 1.0f),           // up
+		glm::vec3(0.0f),                       // right
+	};
+
+	double lastMouseX = 0.0;
+	double lastMouseY = 0.0;
+	bool firstMouse = true;
+	bool forward;
+	bool backward;
+	bool left;
+	bool right;
+	bool up;
+	bool down;
+
 	bool frameBufferResized = false;
+
+	std::chrono::high_resolution_clock::time_point startTime = std::chrono::high_resolution_clock::now();
 
 	void windowInitalization()
 	{
@@ -401,6 +439,8 @@ private:
 		window = glfwCreateWindow(width, height, "vulkan", nullptr, nullptr);
 		glfwSetWindowUserPointer(window, this);
 		glfwSetFramebufferSizeCallback(window, frameBufferResizeCallback);
+		glfwSetCursorPosCallback(window, mouseCallback);
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	}
 
 	static void frameBufferResizeCallback(GLFWwindow* window, int width, int height)
@@ -408,6 +448,33 @@ private:
 		auto app = reinterpret_cast<application*>(glfwGetWindowUserPointer(window));
 		app->frameBufferResized = true;
 	}
+
+    static void mouseCallback(GLFWwindow* window, double xpos, double ypos)
+    {
+       auto app = reinterpret_cast<application*>(glfwGetWindowUserPointer(window));
+       app->handleMouseCallback(xpos, ypos);
+    }
+
+    void handleMouseCallback(double xpos, double ypos)
+    {
+       static float deltaX = 0.0f;
+       static float deltaY = 0.0f;
+
+       if (firstMouse)
+       {
+           lastMouseX = xpos;
+           lastMouseY = ypos;
+           firstMouse = false;
+       }
+
+       deltaX = xpos - lastMouseX;
+       deltaY = lastMouseY - ypos;
+
+       lastMouseX = xpos;
+       lastMouseY = ypos;
+
+       processMouse(deltaX, deltaY);
+    }
 
 	void vulkanInitalization()
 	{
@@ -419,6 +486,7 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
+		updateCameraVectors();
 		//createDescriptorSetLayout();
 		createRayTracingDescriptorSetLayout();
 		createAlphaDescriptorSetLayout();
@@ -462,6 +530,11 @@ private:
 	{
 		while (!glfwWindowShouldClose(window))
 		{
+			if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) 
+			{
+				glfwSetWindowShouldClose(window, GLFW_TRUE);
+			}
+
 			glfwPollEvents();
 			drawFrameRayTracing();
 		}
@@ -2859,27 +2932,75 @@ private:
 		}
 	}
 
+	void updateCameraVectors()
+	{
+		glm::vec3 front;
+		front.x = cos(camera.pitch) * cos(camera.yaw);
+		front.y = cos(camera.pitch) * sin(camera.yaw);
+		front.z = sin(camera.pitch);
+		camera.front = glm::normalize(front);
+
+		camera.right = glm::normalize(glm::cross(camera.front, glm::vec3(0.0f, 0.0f, 1.0f)));
+		camera.up = glm::normalize(glm::cross(camera.right, camera.front));
+	}
+
+	void processMouse(float deltaX, float deltaY)
+	{
+		camera.yaw += deltaX * camera.sensitivity;
+		camera.pitch += deltaY * camera.sensitivity;
+
+		camera.pitch = glm::clamp(camera.pitch, glm::radians(-89.0f), glm::radians(89.0f));
+		
+		updateCameraVectors();
+	}
+
+	void processKeyboard(float deltaTime)
+	{
+		float velocity = camera.speed * deltaTime;
+
+		if (forward)
+		{
+			camera.position += camera.front * velocity;
+		}
+		if (backward)
+		{
+			camera.position -= camera.front * velocity;
+		}
+		if (left)
+		{
+			camera.position += camera.right * velocity;
+		}
+		if (right)
+		{
+			camera.position -= camera.right * velocity;
+		}
+		if (up)
+		{
+			camera.position += camera.up * velocity;
+		}
+		if (down)
+		{
+			camera.position -= camera.up * velocity;
+		}
+	}
+
 	void updateUniformBuffer(uint32_t currentImage)
 	{
-		static auto startTime = std::chrono::high_resolution_clock::now();
-
-		auto currentTime = std::chrono::high_resolution_clock::now();
-		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
 		uniformBufferObject ubo{};
 		//ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-		float radius = 2.5f;
-		float yaw = time * glm::radians(-60.0f);
+		//float radius = 2.5f;
+		//float yaw = time * glm::radians(-60.0f);
 
-		float camX = sin(yaw) * radius;
-		float camY = cos(yaw) * radius;
+		//float camX = sin(yaw) * radius;
+		//float camY = cos(yaw) * radius;
 
-		glm::vec3 cameraPos = glm::vec3(camX, camY, 2.0f);
-		glm::vec3 target = glm::vec3(0.0f, 0.0f, 1.0f);
-		glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
+		//glm::vec3 cameraPos = glm::vec3(camX, camY, 2.0f);
+		//glm::vec3 target = glm::vec3(0.0f, 0.0f, 1.0f);
+		//glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
 
-		ubo.view = glm::lookAt(cameraPos, target, up);
+		//ubo.view = glm::lookAt(cameraPos, target, up);
 
+		ubo.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
 		ubo.proj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
 		ubo.proj[1][1] *= -1;
 
@@ -2973,6 +3094,19 @@ private:
 			throw std::runtime_error("fauked to acquire swap chain image");
 		}
 
+
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float deltaTime = std::chrono::duration<float>(currentTime - startTime).count();
+		startTime = currentTime;
+
+		forward = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
+		backward = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
+		left = glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
+		right = glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+		up = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+		down = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+
+		processKeyboard(deltaTime);
 		updateUniformBuffer(currentFrame);
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
