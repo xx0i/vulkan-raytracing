@@ -280,6 +280,13 @@ struct camera
 	glm::vec3 right;
 };
 
+struct sphere 
+{
+	glm::vec3 center;
+	float radius;
+	glm::vec4 colour;
+};
+
 class application
 {
 public:
@@ -406,9 +413,19 @@ private:
 	VkStridedDeviceAddressRegionKHR hitRegion{};
 	VkStridedDeviceAddressRegionKHR callableRegion{};
 
+	std::vector<VkAabbPositionsKHR> aabbs;
+	VkBuffer aabbBuffer;
+	VkDeviceMemory aabbBufferMemory;
+	VkDeviceAddress aabbAddress;
+
+	std::vector<sphere> spheres;
+	VkBuffer sphereBuffer;
+	VkDeviceMemory sphereBufferMemory;
+	VkDeviceAddress sphereAddress;
+
 	camera camera
 	{
-		glm::vec3(1.81692, 0.444658, 1.49269), // position
+		glm::vec3(4.97612, 1.64914, 1.59863),  // position
 		glm::radians(-163.23f),                // yaw
 		glm::radians(-16.86f),				   // pitch
 		2.0f,								   // speed
@@ -510,8 +527,11 @@ private:
 		createComputeImageView();
 		loadModel();
 		//simpleDraw();
+		simpleSphere();
 		createVertexBuffer();
 		createIndexBuffer();
+		createAABBBuffer();
+		createSphereBuffer();
 		createAccerlerationStructures();
 		createUniformBuffer();
 		createShaderBindingTables();
@@ -622,6 +642,12 @@ private:
 
 		vkDestroyBuffer(device, indexBuffer, nullptr);
 		vkFreeMemory(device, indexBufferMemory, nullptr);
+
+		vkDestroyBuffer(device, aabbBuffer, nullptr);
+		vkFreeMemory(device, aabbBufferMemory, nullptr);
+
+		vkDestroyBuffer(device, sphereBuffer, nullptr);
+		vkFreeMemory(device, sphereBufferMemory, nullptr);
 
 		vkDestroyBuffer(device, blasBuffer, nullptr);
 		vkFreeMemory(device, blasMemory, nullptr);
@@ -1075,9 +1101,15 @@ private:
 		indexBinding.descriptorCount = 1;
 		indexBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		std::array<VkDescriptorSetLayoutBinding, 6> bindings =
+		VkDescriptorSetLayoutBinding sphereBinding{}; 
+		sphereBinding.binding = 6;
+		sphereBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		sphereBinding.descriptorCount = 1;
+		sphereBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+
+		std::array<VkDescriptorSetLayoutBinding, 7> bindings =
 		{
-			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding
+			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1304,11 +1336,13 @@ private:
 		auto missShaderCode = readFile("rayTracing/rmiss.spv");
 		auto closesthitShaderCode = readFile("rayTracing/rchit.spv");
 		auto anyhitShaderCode = readFile("rayTracing/rahit.spv");
+		auto intersectionCode = readFile("rayTracing/rint.spv");
 
 		VkShaderModule rayGenShaderModule = createShaderModule(rayGenShaderCode);
 		VkShaderModule missShaderModule = createShaderModule(missShaderCode);
 		VkShaderModule closesthitShaderModule = createShaderModule(closesthitShaderCode);
 		VkShaderModule anyhitShaderModule = createShaderModule(anyhitShaderCode);
+		VkShaderModule intersectionShaderModule = createShaderModule(intersectionCode);
 
 		VkPipelineShaderStageCreateInfo rayGenShaderStageInfo{};
 		rayGenShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1334,7 +1368,14 @@ private:
 		anyhitShaderStageInfo.module = anyhitShaderModule;
 		anyhitShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo, anyhitShaderStageInfo };
+		VkPipelineShaderStageCreateInfo intersectionShaderStageInfo{};
+		intersectionShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		intersectionShaderStageInfo.stage = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+		intersectionShaderStageInfo.module = intersectionShaderModule;
+		intersectionShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo, anyhitShaderStageInfo,
+															intersectionShaderStageInfo };
 
 		VkRayTracingShaderGroupCreateInfoKHR rayGenStage{};
 		rayGenStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -1352,15 +1393,15 @@ private:
 		missStage.anyHitShader = VK_SHADER_UNUSED_KHR;
 		missStage.intersectionShader = VK_SHADER_UNUSED_KHR;
 
-		VkRayTracingShaderGroupCreateInfoKHR closestAndAnyHitStages{};
-		closestAndAnyHitStages.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-		closestAndAnyHitStages.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-		closestAndAnyHitStages.generalShader = VK_SHADER_UNUSED_KHR;
-		closestAndAnyHitStages.closestHitShader = 2;
-		closestAndAnyHitStages.anyHitShader = 3;
-		closestAndAnyHitStages.intersectionShader = VK_SHADER_UNUSED_KHR;
+		VkRayTracingShaderGroupCreateInfoKHR hitStages{};
+		hitStages.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+		hitStages.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
+		hitStages.generalShader = VK_SHADER_UNUSED_KHR;
+		hitStages.closestHitShader = 2;
+		hitStages.anyHitShader = 3;
+		hitStages.intersectionShader = 4;
 
-		VkRayTracingShaderGroupCreateInfoKHR shaderGroups[] = { rayGenStage,	missStage, closestAndAnyHitStages };
+		VkRayTracingShaderGroupCreateInfoKHR shaderGroups[] = { rayGenStage,	missStage, hitStages };
 
 
 		std::array<VkDescriptorSetLayout, 2> layouts = { rayTracingDescriptorSetLayout, alphaDescriptorSetLayout };
@@ -1390,6 +1431,7 @@ private:
 		vkDestroyShaderModule(device, missShaderModule, nullptr);
 		vkDestroyShaderModule(device, closesthitShaderModule, nullptr);
 		vkDestroyShaderModule(device, anyhitShaderModule, nullptr);
+		vkDestroyShaderModule(device, intersectionShaderModule, nullptr);
 	}
 
 	void createComputePipeline()
@@ -2034,6 +2076,29 @@ private:
 		indices = { 0, 1, 2, 2, 3, 0 };
 	}
 
+	void simpleSphere()
+	{
+		spheres =
+		{
+			{{0.0f, 0.0f, 0.0f}, 2.0f, {1.0f, 0.0f, 1.0f, 1.0f}},
+		};
+
+		for (auto& sphere : spheres)
+		{
+			VkAabbPositionsKHR aabb = 
+			{
+				sphere.center.x - sphere.radius,
+				sphere.center.y - sphere.radius,
+				sphere.center.z - sphere.radius,
+				sphere.center.x + sphere.radius,
+				sphere.center.y + sphere.radius,
+				sphere.center.z + sphere.radius
+			};
+			
+			aabbs.push_back(aabb);
+		}
+	}
+
 	void loadModel()
 	{
 		tinyobj::attrib_t attributes;
@@ -2100,7 +2165,8 @@ private:
 		memcpy(data, vertices.data(), (size_t)bufferSize);
 		vkUnmapMemory(device, stagingBufferMemory);
 
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vertexBuffer, vertexBufferMemory);
 
 		vertexAddress = findBufferDeviceAddress(device, vertexBuffer);
@@ -2125,8 +2191,8 @@ private:
 		memcpy(data, indices.data(), (size_t)bufferSize);
 		vkUnmapMemory(device, stagingBufferMemory);
 
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
 
 		indexAddress = findBufferDeviceAddress(device, indexBuffer);
 
@@ -2136,13 +2202,63 @@ private:
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
+	void createAABBBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(aabbs[0]) * aabbs.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, aabbs.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aabbBuffer, aabbBufferMemory);
+
+		aabbAddress = findBufferDeviceAddress(device, aabbBuffer);
+
+		copyBuffer(stagingBuffer, aabbBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createSphereBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(spheres[0]) * spheres.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, spheres.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sphereBuffer, sphereBufferMemory);
+
+		sphereAddress = findBufferDeviceAddress(device, sphereBuffer);
+
+		copyBuffer(stagingBuffer, sphereBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
 	void createAccerlerationStructures()
 	{
-		createBLAS();
+		createBLASaabb();
 		createTLAS();
 	}
 
-	void createBLAS()
+	void createBLAStriangle()
 	{
 		VkAccelerationStructureGeometryTrianglesDataKHR triangleData{};
 		triangleData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
@@ -2212,6 +2328,72 @@ private:
 		vkDestroyBuffer(device, scratchBuffer, nullptr);
 	}
 
+	void createBLASaabb()
+	{
+		VkAccelerationStructureGeometryAabbsDataKHR aabbData{};
+		aabbData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
+		aabbData.data.deviceAddress = aabbAddress;
+		aabbData.stride = sizeof(VkAabbPositionsKHR);
+
+		VkAccelerationStructureGeometryKHR geometry{};
+		geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+		geometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
+		geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+		geometry.geometry.aabbs = aabbData;
+
+		VkAccelerationStructureBuildGeometryInfoKHR buildGeometryInfo{};
+		buildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+		buildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		buildGeometryInfo.geometryCount = 1;
+		buildGeometryInfo.pGeometries = &geometry;
+		buildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+
+		VkAccelerationStructureBuildSizesInfoKHR buildSizesInfo = {};
+		buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+		uint32_t maxPrimitiveCount = static_cast<uint32_t>(aabbs.size());
+
+		GetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildGeometryInfo, &maxPrimitiveCount, &buildSizesInfo);
+
+		createBuffer(buildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, blasBuffer, blasMemory);
+
+		VkAccelerationStructureCreateInfoKHR blasCreateInfo = {};
+		blasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+		blasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		blasCreateInfo.size = buildSizesInfo.accelerationStructureSize;
+		blasCreateInfo.buffer = blasBuffer;
+
+		CreateAccelerationStructureKHR(device, &blasCreateInfo, nullptr, &blas);
+
+		buildGeometryInfo.dstAccelerationStructure = blas;
+
+		VkBuffer scratchBuffer;
+		VkDeviceMemory scratchMemory;
+
+		createBuffer(buildSizesInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, scratchBuffer, scratchMemory);
+
+		VkDeviceAddress scratchAddress = findBufferDeviceAddress(device, scratchBuffer);
+		buildGeometryInfo.scratchData.deviceAddress = scratchAddress;
+
+		VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+		buildRangeInfo.primitiveCount = maxPrimitiveCount;
+		buildRangeInfo.primitiveOffset = 0;
+		buildRangeInfo.firstVertex = 0;
+		buildRangeInfo.transformOffset = 0;
+
+		const VkAccelerationStructureBuildRangeInfoKHR* rangeInfo = &buildRangeInfo;
+
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		CmdBuildAccelerationStructuresKHR(device, commandBuffer, 1, &buildGeometryInfo, &rangeInfo);
+
+		endSingleTimeCommands(commandBuffer);
+
+		vkFreeMemory(device, scratchMemory, nullptr);
+		vkDestroyBuffer(device, scratchBuffer, nullptr);
+	}
+
 	void createTLAS()
 	{
 		VkAccelerationStructureInstanceKHR asInstance{};
@@ -2219,7 +2401,7 @@ private:
 		VkTransformMatrixKHR identityTransform = {
 		{ {1.0f, 0.0f, 0.0f, 0.0f},
 		{0.0f, 1.0f, 0.0f, 0.0f},
-		{0.0f, 0.0f, 1.0f, 0.8f} }
+		{0.0f, 0.0f, 1.0f, 0.0f} }
 		};
 		asInstance.transform = identityTransform;
 
@@ -2364,7 +2546,7 @@ private:
 		descriptorPoolSizes[5].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
 		descriptorPoolSizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 2);
+		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 3);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2497,7 +2679,12 @@ private:
 			indexBufferInfo.offset = 0;
 			indexBufferInfo.range = sizeof(indices[0]) * indices.size();
 
-			std::array<VkWriteDescriptorSet, 6> writeDescriptorSets{};
+			VkDescriptorBufferInfo sphereBufferInfo{};
+			sphereBufferInfo.buffer = sphereBuffer;
+			sphereBufferInfo.offset = 0;
+			sphereBufferInfo.range = sizeof(spheres[0]) * spheres.size();
+
+			std::array<VkWriteDescriptorSet, 7> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = rayTracingDescriptorSets[i];
@@ -2544,6 +2731,13 @@ private:
 			writeDescriptorSets[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 			writeDescriptorSets[5].descriptorCount = 1;
 			writeDescriptorSets[5].pBufferInfo = &indexBufferInfo;
+
+			writeDescriptorSets[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[6].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[6].dstBinding = 6;
+			writeDescriptorSets[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[6].descriptorCount = 1;
+			writeDescriptorSets[6].pBufferInfo = &sphereBufferInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}

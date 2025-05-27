@@ -1,10 +1,11 @@
 ﻿  main.cpp
   GLM_GTX_hash requires C++11 standard library support
-C:\full sail\vulkan\vulkan\vulkan\main.cpp(470,22): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
-C:\full sail\vulkan\vulkan\vulkan\main.cpp(471,28): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+C:\full sail\vulkan\vulkan\vulkan\main.cpp(493,22): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+C:\full sail\vulkan\vulkan\vulkan\main.cpp(494,28): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
   Generating code
-  Previous IPDB and IOBJ mismatch, fall back to full compilation.
-  All 3246 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  11 of 3246 functions ( 0.3%) were compiled, the rest were copied from previous compilation.
+    5 functions were new in current compilation
+    17 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   vulkan.vcxproj -> C:\full sail\vulkan\vulkan\x64\Release\vulkan.exe
   'pwsh.exe' is not recognized as an internal or external command,

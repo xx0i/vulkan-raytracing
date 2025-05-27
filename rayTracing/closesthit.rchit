@@ -51,5 +51,7 @@ void main()
     vec3 texColour = texture(textureSampler, texCoord).rgb;
     vec3 vertexColour = w * colour0 + u * colour1 + v * colour2;
 
-    payload = toSRGB(texColour);
+    //payload = toSRGB(texColour);
+    //payload = vertexColour;
+      payload = vec3(0.0, 1.0, 0.0);
 }
