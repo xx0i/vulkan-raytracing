@@ -12,11 +12,19 @@ struct vertex
     vec2 _pad2;
 };
 
+struct sphere 
+{
+    vec3 center;
+    float radius;
+    vec4 colour;
+};
+
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba8) readonly uniform image2D outputImage;
 layout(set = 0, binding = 3) uniform sampler2D textureSampler;
 layout(set = 0, binding = 4) readonly buffer VertexBuffer {vertex vertices[];};
 layout(set = 0, binding = 5) readonly buffer IndexBuffer {uint indices[];};
+layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
 
 layout(location = 0) rayPayloadInEXT vec3 payload;
 
@@ -51,7 +59,9 @@ void main()
     vec3 texColour = texture(textureSampler, texCoord).rgb;
     vec3 vertexColour = w * colour0 + u * colour1 + v * colour2;
 
+    sphere sph = spheres.s[gl_PrimitiveID];
+
     //payload = toSRGB(texColour);
     //payload = vertexColour;
-      payload = vec3(0.0, 1.0, 0.0);
+      payload = sph.colour.rgb;
 }

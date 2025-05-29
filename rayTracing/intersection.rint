@@ -8,10 +8,7 @@ struct sphere
     vec4 colour;
 };
 
-layout(set = 0, binding = 6) buffer sphereBuffer
-{
-    sphere s[];
-}spheres;
+layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
 
 hitAttributeEXT vec2 attribs;
 

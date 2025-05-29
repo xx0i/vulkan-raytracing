@@ -285,6 +285,7 @@ struct sphere
 	glm::vec3 center;
 	float radius;
 	glm::vec4 colour;
+	glm::vec2 texCoord;
 };
 
 class application
@@ -1105,7 +1106,7 @@ private:
 		sphereBinding.binding = 6;
 		sphereBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		sphereBinding.descriptorCount = 1;
-		sphereBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+		sphereBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
 		std::array<VkDescriptorSetLayoutBinding, 7> bindings =
 		{
@@ -2080,7 +2081,8 @@ private:
 	{
 		spheres =
 		{
-			{{0.0f, 0.0f, 0.0f}, 2.0f, {1.0f, 0.0f, 1.0f, 1.0f}},
+			{{0.0f, 0.0f, 0.0f}, 1.0f, {1.0f, 0.0f, 1.0f, 1.0f}},
+			{{-5.0f, 0.0f, -5.0f}, 1.0f, {0.0f, 1.0f, 0.0f, 1.0f}},
 		};
 
 		for (auto& sphere : spheres)
