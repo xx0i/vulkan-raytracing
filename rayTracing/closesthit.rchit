@@ -26,7 +26,13 @@ layout(set = 0, binding = 4) readonly buffer VertexBuffer {vertex vertices[];};
 layout(set = 0, binding = 5) readonly buffer IndexBuffer {uint indices[];};
 layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
 
-layout(location = 0) rayPayloadInEXT vec3 payload;
+struct rayPayload 
+{
+    vec3 colour;
+    vec3 rayDir;
+};
+
+layout(location = 0) rayPayloadInEXT rayPayload payload;
 
 hitAttributeEXT vec2 attribs;
 
@@ -60,8 +66,19 @@ void main()
     vec3 vertexColour = w * colour0 + u * colour1 + v * colour2;
 
     sphere sph = spheres.s[gl_PrimitiveID];
-
-    //payload = toSRGB(texColour);
-    //payload = vertexColour;
-      payload = sph.colour.rgb;
+    
+    if (gl_PrimitiveID == 0)
+    {
+	vec3 hitPosition = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
+	vec3 normal = normalize(hitPosition - sph.center); 	
+	vec3 normalColour = 0.5 * (normal + vec3(1.0));
+    	
+	payload.colour = normalColour;
+    }
+    else
+    {
+	//payload.colour = toSRGB(texColour);
+	//payload.colour = toSRGB(vertexColour);
+	payload.colour = sph.colour.rgb;
+    }
 }
