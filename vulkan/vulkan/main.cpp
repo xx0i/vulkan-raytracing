@@ -280,12 +280,11 @@ struct camera
 	glm::vec3 right;
 };
 
-struct sphere 
+struct sphere
 {
 	glm::vec3 center;
 	float radius;
 	glm::vec4 colour;
-	glm::vec2 texCoord;
 };
 
 class application
@@ -426,14 +425,14 @@ private:
 
 	camera camera
 	{
-		glm::vec3(4.97612, 1.64914, 1.59863),  // position
-		glm::radians(-163.23f),                // yaw
-		glm::radians(-16.86f),				   // pitch
-		2.0f,								   // speed
-		0.001f,                                // sensitivity
-		glm::vec3(0.0f),                       // front (will be set by updateCameraVectors)
-		glm::vec3(0.0f, 0.0f, 1.0f),           // up
-		glm::vec3(0.0f),                       // right
+		glm::vec3(1.90368, 0.575127, -0.259169),  // position
+		glm::radians(-163.23f),					  // yaw
+		glm::radians(-16.86f),					  // pitch
+		2.0f,									  // speed
+		0.001f,									  // sensitivity
+		glm::vec3(0.0f),						  // front (will be set by updateCameraVectors)
+		glm::vec3(0.0f, 0.0f, 1.0f),			  // up
+		glm::vec3(0.0f),						  // right
 	};
 
 	double lastMouseX = 0.0;
@@ -467,32 +466,32 @@ private:
 		app->frameBufferResized = true;
 	}
 
-    static void mouseCallback(GLFWwindow* window, double xpos, double ypos)
-    {
-       auto app = reinterpret_cast<application*>(glfwGetWindowUserPointer(window));
-       app->handleMouseCallback(xpos, ypos);
-    }
+	static void mouseCallback(GLFWwindow* window, double xpos, double ypos)
+	{
+		auto app = reinterpret_cast<application*>(glfwGetWindowUserPointer(window));
+		app->handleMouseCallback(xpos, ypos);
+	}
 
-    void handleMouseCallback(double xpos, double ypos)
-    {
-       static float deltaX = 0.0f;
-       static float deltaY = 0.0f;
+	void handleMouseCallback(double xpos, double ypos)
+	{
+		static float deltaX = 0.0f;
+		static float deltaY = 0.0f;
 
-       if (firstMouse)
-       {
-           lastMouseX = xpos;
-           lastMouseY = ypos;
-           firstMouse = false;
-       }
+		if (firstMouse)
+		{
+			lastMouseX = xpos;
+			lastMouseY = ypos;
+			firstMouse = false;
+		}
 
-       deltaX = xpos - lastMouseX;
-       deltaY = lastMouseY - ypos;
+		deltaX = xpos - lastMouseX;
+		deltaY = lastMouseY - ypos;
 
-       lastMouseX = xpos;
-       lastMouseY = ypos;
+		lastMouseX = xpos;
+		lastMouseY = ypos;
 
-       processMouse(deltaX, deltaY);
-    }
+		processMouse(deltaX, deltaY);
+	}
 
 	void vulkanInitalization()
 	{
@@ -551,7 +550,7 @@ private:
 	{
 		while (!glfwWindowShouldClose(window))
 		{
-			if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) 
+			if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 			{
 				glfwSetWindowShouldClose(window, GLFW_TRUE);
 			}
@@ -1102,7 +1101,7 @@ private:
 		indexBinding.descriptorCount = 1;
 		indexBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		VkDescriptorSetLayoutBinding sphereBinding{}; 
+		VkDescriptorSetLayoutBinding sphereBinding{};
 		sphereBinding.binding = 6;
 		sphereBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		sphereBinding.descriptorCount = 1;
@@ -2081,13 +2080,13 @@ private:
 	{
 		spheres =
 		{
-			{{0.0f, 0.0f, 0.0f}, 1.0f, {1.0f, 0.0f, 1.0f, 1.0f}},
-			{{-5.0f, 0.0f, -5.0f}, 1.0f, {0.0f, 1.0f, 0.0f, 1.0f}},
+			{{0.0f, 0.0f, -1.0f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}},
+			{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}},
 		};
 
 		for (auto& sphere : spheres)
 		{
-			VkAabbPositionsKHR aabb = 
+			VkAabbPositionsKHR aabb =
 			{
 				sphere.center.x - sphere.radius,
 				sphere.center.y - sphere.radius,
@@ -2096,7 +2095,7 @@ private:
 				sphere.center.y + sphere.radius,
 				sphere.center.z + sphere.radius
 			};
-			
+
 			aabbs.push_back(aabb);
 		}
 	}
@@ -2167,7 +2166,7 @@ private:
 		memcpy(data, vertices.data(), (size_t)bufferSize);
 		vkUnmapMemory(device, stagingBufferMemory);
 
-		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vertexBuffer, vertexBufferMemory);
 
@@ -3146,7 +3145,7 @@ private:
 		camera.pitch += deltaY * camera.sensitivity;
 
 		camera.pitch = glm::clamp(camera.pitch, glm::radians(-89.0f), glm::radians(89.0f));
-		
+
 		updateCameraVectors();
 	}
 
