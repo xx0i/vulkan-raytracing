@@ -14,4 +14,8 @@ I have created a vulkan project from scratch building up from window creation to
   
       C:\VulkanSDK\1.4.309.0\Lib
       $(SolutionDir)..\libraries\glfw-3.4.bin.WIN64\lib-vc2022
+- in the  Configuration Properties → Debugging → Working Directory please set it to
+
+      ../..
+  
 - after applying these changes you should be able to run the project!
