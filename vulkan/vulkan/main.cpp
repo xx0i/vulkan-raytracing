@@ -285,6 +285,26 @@ struct sphere
 	glm::vec3 center;
 	float radius;
 	glm::vec4 colour;
+	uint32_t normalColouring;
+	uint32_t padding[3];
+};
+
+enum materialType : uint32_t
+{
+	lambertian = 0,
+	metal = 1,
+	dielectric = 2,
+	isotropic = 3,
+	diffuseLight = 4
+};
+
+struct alignas(16) material
+{
+	glm::vec4 albedo;
+	float fuzz;
+	float refractionIndex;
+	materialType matType;
+	uint32_t padding;
 };
 
 class application
@@ -423,6 +443,11 @@ private:
 	VkDeviceMemory sphereBufferMemory;
 	VkDeviceAddress sphereAddress;
 
+	std::vector<material> materials;
+	VkBuffer materialBuffer;
+	VkDeviceMemory materialBufferMemory;
+	VkDeviceAddress materialAddress;
+
 	camera camera
 	{
 		glm::vec3(1.90368, 0.575127, -0.259169),  // position
@@ -532,6 +557,7 @@ private:
 		createIndexBuffer();
 		createAABBBuffer();
 		createSphereBuffer();
+		createMaterialBuffer();
 		createAccerlerationStructures();
 		createUniformBuffer();
 		createShaderBindingTables();
@@ -648,6 +674,9 @@ private:
 
 		vkDestroyBuffer(device, sphereBuffer, nullptr);
 		vkFreeMemory(device, sphereBufferMemory, nullptr);
+
+		vkDestroyBuffer(device, materialBuffer, nullptr);
+		vkFreeMemory(device, materialBufferMemory, nullptr);
 
 		vkDestroyBuffer(device, blasBuffer, nullptr);
 		vkFreeMemory(device, blasMemory, nullptr);
@@ -1107,9 +1136,15 @@ private:
 		sphereBinding.descriptorCount = 1;
 		sphereBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		std::array<VkDescriptorSetLayoutBinding, 7> bindings =
+		VkDescriptorSetLayoutBinding materialBinding{};
+		materialBinding.binding = 7;
+		materialBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		materialBinding.descriptorCount = 1;
+		materialBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+		std::array<VkDescriptorSetLayoutBinding, 8> bindings =
 		{
-			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding
+			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding, materialBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -2080,8 +2115,8 @@ private:
 	{
 		spheres =
 		{
-			{{0.0f, 0.0f, -1.0f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}},
-			{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}},
+			{{0.0f, 0.0f, -1.0f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},
+			{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},
 		};
 
 		for (auto& sphere : spheres)
@@ -2098,6 +2133,12 @@ private:
 
 			aabbs.push_back(aabb);
 		}
+
+		materials =
+		{
+			{{1.0f, 0.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+			{{0.0f, 1.0f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian}
+		};
 	}
 
 	void loadModel()
@@ -2248,6 +2289,31 @@ private:
 		sphereAddress = findBufferDeviceAddress(device, sphereBuffer);
 
 		copyBuffer(stagingBuffer, sphereBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createMaterialBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(materials[0]) * materials.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, materials.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, materialBuffer, materialBufferMemory);
+
+		materialAddress = findBufferDeviceAddress(device, materialBuffer);
+
+		copyBuffer(stagingBuffer, materialBuffer, bufferSize);
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -2547,7 +2613,7 @@ private:
 		descriptorPoolSizes[5].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
 		descriptorPoolSizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 3);
+		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 4);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2685,7 +2751,12 @@ private:
 			sphereBufferInfo.offset = 0;
 			sphereBufferInfo.range = sizeof(spheres[0]) * spheres.size();
 
-			std::array<VkWriteDescriptorSet, 7> writeDescriptorSets{};
+			VkDescriptorBufferInfo materialBufferInfo{};
+			materialBufferInfo.buffer = materialBuffer;
+			materialBufferInfo.offset = 0;
+			materialBufferInfo.range = sizeof(materials[0]) * materials.size();
+
+			std::array<VkWriteDescriptorSet, 8> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = rayTracingDescriptorSets[i];
@@ -2739,6 +2810,13 @@ private:
 			writeDescriptorSets[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 			writeDescriptorSets[6].descriptorCount = 1;
 			writeDescriptorSets[6].pBufferInfo = &sphereBufferInfo;
+
+			writeDescriptorSets[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[7].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[7].dstBinding = 7;
+			writeDescriptorSets[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[7].descriptorCount = 1;
+			writeDescriptorSets[7].pBufferInfo = &materialBufferInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -3182,19 +3260,6 @@ private:
 	void updateUniformBuffer(uint32_t currentImage)
 	{
 		uniformBufferObject ubo{};
-		//ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-		//float radius = 2.5f;
-		//float yaw = time * glm::radians(-60.0f);
-
-		//float camX = sin(yaw) * radius;
-		//float camY = cos(yaw) * radius;
-
-		//glm::vec3 cameraPos = glm::vec3(camX, camY, 2.0f);
-		//glm::vec3 target = glm::vec3(0.0f, 0.0f, 1.0f);
-		//glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
-
-		//ubo.view = glm::lookAt(cameraPos, target, up);
-
 		ubo.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
 		ubo.proj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
 		ubo.proj[1][1] *= -1;
@@ -3310,7 +3375,7 @@ private:
 		recordRayTracingCommandBuffer(commandBuffers[currentFrame], imageIndex);
 
 		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
-		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
 
 		VkSubmitInfo submitInfo{};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -3324,7 +3389,9 @@ private:
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
 
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
+		result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
+
+		if (result != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to submit draw command buffer");
 		}

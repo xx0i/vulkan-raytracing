@@ -5,6 +5,7 @@ struct rayPayload
 {
     vec3 colour;
     vec3 rayDir;
+    int depth;
 };
 
 layout(location = 0) rayPayloadInEXT rayPayload payload;
