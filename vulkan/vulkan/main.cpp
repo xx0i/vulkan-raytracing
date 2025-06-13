@@ -199,9 +199,6 @@ struct swapChainSupportDetails
 
 struct vertex
 {
-	//glm::vec3 pos;
-	//glm::vec3 colour;
-	//glm::vec2 texCoord;
 	glm::vec3 pos;
 	float _pad0 = 0.0f;
 	glm::vec3 colour;
@@ -1457,7 +1454,7 @@ private:
 		pipelineInfo.pStages = shaderStages;
 		pipelineInfo.groupCount = static_cast<uint32_t>(std::size(shaderGroups));
 		pipelineInfo.pGroups = shaderGroups;
-		pipelineInfo.maxPipelineRayRecursionDepth = 1;
+		pipelineInfo.maxPipelineRayRecursionDepth = 5;
 		pipelineInfo.layout = rayTracingPipelineLayout;
 
 		CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &rayTracingPipeline);
@@ -2018,7 +2015,6 @@ private:
 			sourceStage = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
 			destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 		}
-
 		else
 		{
 			throw std::runtime_error("unsupported layout transition");
@@ -2136,8 +2132,8 @@ private:
 
 		materials =
 		{
-			{{1.0f, 0.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
-			{{0.0f, 1.0f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian}
+			{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+			{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian}
 		};
 	}
 
@@ -3122,7 +3118,7 @@ private:
 		{
 			throw std::runtime_error("failed to begin recording command buffer");
 		}
-
+		
 		transitionImageLayout(swapChainImages[imageIndex], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 		transitionImageLayout(storeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 		transitionImageLayout(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
