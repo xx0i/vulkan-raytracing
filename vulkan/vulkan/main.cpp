@@ -304,6 +304,11 @@ struct alignas(16) material
 	uint32_t padding;
 };
 
+struct indexUniformBufferObject
+{
+	uint32_t imageIndex;
+};
+
 class application
 {
 public:
@@ -382,6 +387,10 @@ private:
 	VkDeviceMemory computeImageMemory;
 	VkImageView computeImageView;
 
+	VkImage accumulationImage;
+	VkDeviceMemory accumulationImageMemory;
+	VkImageView accumulationImageView;
+
 	std::vector<vertex> vertices;
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
@@ -447,7 +456,7 @@ private:
 
 	camera camera
 	{
-		glm::vec3(1.90368, 0.575127, -0.259169),  // position
+		glm::vec3(1.98333, 0.599127, -4.14501),   // position
 		glm::radians(-163.23f),					  // yaw
 		glm::radians(-16.86f),					  // pitch
 		2.0f,									  // speed
@@ -470,6 +479,8 @@ private:
 	bool frameBufferResized = false;
 
 	std::chrono::high_resolution_clock::time_point startTime = std::chrono::high_resolution_clock::now();
+
+	uint32_t frameCounter;
 
 	void windowInitalization()
 	{
@@ -547,6 +558,8 @@ private:
 		createAlphaSampler();
 		createComputeImage();
 		createComputeImageView();
+		createAccumulationImage();
+		createAccumulationImageView();
 		loadModel();
 		//simpleDraw();
 		simpleSphere();
@@ -652,6 +665,10 @@ private:
 		vkDestroyImageView(device, computeImageView, nullptr);
 		vkDestroyImage(device, computeImage, nullptr);
 		vkFreeMemory(device, computeImageMemory, nullptr);
+
+		vkDestroyImageView(device, accumulationImageView, nullptr);
+		vkDestroyImage(device, accumulationImage, nullptr);
+		vkFreeMemory(device, accumulationImageMemory, nullptr);
 
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
@@ -1185,8 +1202,6 @@ private:
 
 	void createComputeDescriptorSetLayout()
 	{
-
-
 		VkDescriptorSetLayoutBinding outputImageBinding{};
 		outputImageBinding.binding = 0;
 		outputImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1201,7 +1216,14 @@ private:
 		inputImageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 		inputImageBinding.pImmutableSamplers = nullptr;
 
-		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { outputImageBinding, inputImageBinding };
+		VkDescriptorSetLayoutBinding accumulationImageBinding{};
+		accumulationImageBinding.binding = 2;
+		accumulationImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		accumulationImageBinding.descriptorCount = 1;
+		accumulationImageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+		accumulationImageBinding.pImmutableSamplers = nullptr;
+
+		std::array<VkDescriptorSetLayoutBinding, 3> bindings = { outputImageBinding, inputImageBinding, accumulationImageBinding };
 
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1438,10 +1460,17 @@ private:
 
 		std::array<VkDescriptorSetLayout, 2> layouts = { rayTracingDescriptorSetLayout, alphaDescriptorSetLayout };
 
+		VkPushConstantRange pushConstantRange{};
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		pushConstantRange.offset = 0;
+		pushConstantRange.size = sizeof(uint32_t);
+
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(layouts.size());
 		pipelineLayoutInfo.pSetLayouts = layouts.data();
+		pipelineLayoutInfo.pushConstantRangeCount = 1;
+		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &rayTracingPipelineLayout) != VK_SUCCESS)
 		{
@@ -1478,10 +1507,17 @@ private:
 		computeShaderStageInfo.module = computeShaderModule;
 		computeShaderStageInfo.pName = "main";
 
+		VkPushConstantRange pushConstantRange{};
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		pushConstantRange.offset = 0;
+		pushConstantRange.size = sizeof(uint32_t);
+
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = 1;
 		pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
+		pipelineLayoutInfo.pushConstantRangeCount = 1;
+		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS)
 		{
@@ -1816,7 +1852,15 @@ private:
 		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeImage, computeImageMemory);
 
-		transitionImageLayout(storeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+		transitionImageLayout(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createAccumulationImage()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, accumulationImage, accumulationImageMemory);
+
+		transitionImageLayout(accumulationImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
 
 	void createTextureImageView()
@@ -1837,6 +1881,11 @@ private:
 	void createComputeImageView()
 	{
 		computeImageView = createImageView(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createAccumulationImageView()
+	{
+		accumulationImageView = createImageView(accumulationImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 	}
 
 	void createTextureSampler()
@@ -2060,6 +2109,20 @@ private:
 			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_GENERAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			sourceStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_GENERAL)
+		{
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		}
 		else
 		{
 			throw std::runtime_error("Unsupported layout transition in command buffer.");
@@ -2111,7 +2174,7 @@ private:
 	{
 		spheres =
 		{
-			{{0.0f, 0.0f, -1.0f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},
+			{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},
 			{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},
 		};
 
@@ -2628,7 +2691,7 @@ private:
 		VkDescriptorPoolSize  descriptorPoolSizes{};
 
 		descriptorPoolSizes.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		descriptorPoolSizes.descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 2);
+		descriptorPoolSizes.descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 3);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2892,7 +2955,11 @@ private:
 			computeImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 			computeImageInfo.imageView = computeImageView;
 
-			std::array<VkWriteDescriptorSet, 2> writeDescriptorSets{};
+			VkDescriptorImageInfo accumulationImageInfo{};
+			accumulationImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			accumulationImageInfo.imageView = accumulationImageView;
+
+			std::array<VkWriteDescriptorSet, 3> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = computeDescriptorSets[i];
@@ -2909,6 +2976,14 @@ private:
 			writeDescriptorSets[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 			writeDescriptorSets[1].descriptorCount = 1;
 			writeDescriptorSets[1].pImageInfo = &storeImageInfo;
+
+			writeDescriptorSets[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[2].dstSet = computeDescriptorSets[i];
+			writeDescriptorSets[2].dstBinding = 2;
+			writeDescriptorSets[2].dstArrayElement = 0;
+			writeDescriptorSets[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			writeDescriptorSets[2].descriptorCount = 1;
+			writeDescriptorSets[2].pImageInfo = &accumulationImageInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -3118,7 +3193,7 @@ private:
 		{
 			throw std::runtime_error("failed to begin recording command buffer");
 		}
-		
+
 		transitionImageLayout(swapChainImages[imageIndex], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 		transitionImageLayout(storeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 		transitionImageLayout(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
@@ -3129,6 +3204,9 @@ private:
 
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rayTracingPipelineLayout, 0, static_cast<uint32_t>(descriptorSetsToBind.size()), descriptorSetsToBind.data(),
 			0, nullptr);
+
+		uint32_t frameIndex = frameCounter;
+		vkCmdPushConstants(commandBuffer, rayTracingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(int), &frameIndex);
 
 		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion, &hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
 
@@ -3164,9 +3242,7 @@ private:
 		copyRegion.extent.depth = 1;
 
 		vkCmdCopyImage(commandBuffer, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-
 		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, range);
-
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
 		{
@@ -3221,11 +3297,13 @@ private:
 		camera.pitch = glm::clamp(camera.pitch, glm::radians(-89.0f), glm::radians(89.0f));
 
 		updateCameraVectors();
+		frameCounter = 0;
 	}
 
-	void processKeyboard(float deltaTime)
+	bool processKeyboard(float deltaTime)
 	{
 		float velocity = camera.speed * deltaTime;
+		glm::vec3 originalPosition = camera.position;
 
 		if (forward)
 		{
@@ -3251,6 +3329,7 @@ private:
 		{
 			camera.position -= camera.up * velocity;
 		}
+		return originalPosition != camera.position;
 	}
 
 	void updateUniformBuffer(uint32_t currentImage)
@@ -3362,12 +3441,22 @@ private:
 		up = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
 		down = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
-		processKeyboard(deltaTime);
+		bool moved = processKeyboard(deltaTime);
+		if (moved)
+		{
+			frameCounter = 0;
+		}
+		else
+		{
+			frameCounter++;
+		}
 		updateUniformBuffer(currentFrame);
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
+
+		frameCounter++;
 		recordRayTracingCommandBuffer(commandBuffers[currentFrame], imageIndex);
 
 		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };

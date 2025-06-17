@@ -59,9 +59,33 @@ layout(location = 1) rayPayloadEXT rayPayload newPayload;
 
 hitAttributeEXT vec2 attribs;
 
+layout(push_constant) uniform PushConstants 
+{
+    uint frameIndex;
+} pc;
+
 vec3 toSRGB(vec3 linearColor)
 {
     return pow(linearColor, vec3(1.0 / 2.2));
+}
+
+vec3 cosineSampleHemisphere(float u1, float u2)
+{
+    float r = sqrt(u1);
+    float theta = 2.0 * 3.1415926 * u2;
+
+    float x = r * cos(theta);
+    float y = r * sin(theta);
+    float z = sqrt(1.0 - u1); // Bias toward normal direction
+
+    return vec3(x, y, z); // This is in tangent space
+}
+
+mat3 buildOrthonormalBasis(vec3 n)
+{
+    vec3 t = abs(n.z) < 0.999 ? normalize(cross(n, vec3(0.0, 0.0, 1.0))) : normalize(cross(n, vec3(1.0, 0.0, 0.0)));
+    vec3 b = cross(n, t);
+    return mat3(t, b, n); // Matrix transforms from tangent to world space
 }
 
 void main()
@@ -110,8 +134,13 @@ void main()
     	    return;
 	}
 	
-	uint seed = randomSeed(gl_LaunchIDEXT.x, gl_LaunchIDEXT.y);
-	vec3 scatterDirection = normalize(normal + randomInUnitSphere(seed));
+	uint seed = randomSeed(gl_LaunchIDEXT.x + pc.frameIndex * 73856093, gl_LaunchIDEXT.y + pc.frameIndex * 19349663);
+	//vec3 scatterDirection = normalize(normal + randomInUnitSphere(seed));
+	float u1 = randomFloat(seed);
+	float u2 = randomFloat(seed);
+	vec3 dir1 = cosineSampleHemisphere(u1, u2);
+	vec3 dir2 = randomInUnitSphere(seed);
+	vec3 scatterDirection = normalize(mix(dir1, dir2, 0.5));
 	
 	if(length(scatterDirection) < 1e-3)
 	{
