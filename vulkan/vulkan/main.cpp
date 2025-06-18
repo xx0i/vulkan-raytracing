@@ -2174,7 +2174,7 @@ private:
 	{
 		switch (5)
 		{
-		case 0:
+		case 0: //two simple lambertian spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},           //center
@@ -2188,7 +2188,7 @@ private:
 			};
 			break;
 
-		case 1:
+		case 1: //two lambertian, two metal spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2206,7 +2206,7 @@ private:
 			};
 			break;
 		
-		case 2:
+		case 2: //two lambertian, one dieletric (glass), one metal sphere
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2224,7 +2224,7 @@ private:
 			};
 			break;
 
-		case 3:
+		case 3: //two lambertian, one dieletric (air bubble), one metal sphere
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2242,7 +2242,7 @@ private:
 			};
 			break;
 
-		case 4:
+		case 4: //two lambertian, one dieletric (hollow glass), one metal sphere
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2262,7 +2262,7 @@ private:
 			};
 			break;
 
-		case 5:
+		case 5: //random small spheres with three main spheres and a ground sphere
 			//ground sphere
 			spheres.push_back({ {0.0f, 0.0f, -1000.0f}, 1000.0f, {0.5f, 0.5f, 0.5f, 1.0f}, 0, {} });
 			materials.push_back({ {0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, lambertian, 0 });
