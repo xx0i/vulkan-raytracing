@@ -1,8 +1,8 @@
 #version 460
 
-layout(set = 0, binding = 0, rgba8) writeonly uniform image2D outputImage; // for display (gamma corrected)
-layout(set = 0, binding = 1, rgba8) readonly uniform image2D inputImage;  // current frame from ray tracing (linear)
-layout(set = 0, binding = 2, rgba8) uniform image2D accumulationImage;  // accumulation buffer (linear)
+layout(set = 0, binding = 0, rgba8) writeonly uniform image2D outputImage;
+layout(set = 0, binding = 1, rgba8) readonly uniform image2D inputImage;
+layout(set = 0, binding = 2, rgba8) uniform image2D accumulationImage;
 
 layout(push_constant) uniform PushConstants 
 {
@@ -19,29 +19,26 @@ void main()
 
     vec4 newColour = imageLoad(inputImage, pixelCoords);
 
-    // Swizzle to RGB if needed (BGR->RGB), adjust if your ray tracing output format differs
     newColour = vec4(newColour.b, newColour.g, newColour.r, newColour.a);
 
     vec4 accumulated;
 
     if (pc.frameIndex == 0) 
     {
-        // First frame: accumulation = current frame color (linear)
         accumulated = newColour;
     }
     else
     {
         vec4 prevAccum = imageLoad(accumulationImage, pixelCoords);
         float N = float(pc.frameIndex);
-        // Running average: prev * N + new / (N+1)
+
+        //average: prev * N + new / (N+1)
         accumulated = (prevAccum * N + newColour) / (N + 1.0);
     }
 
-    // Write linear accumulated color back to accumulation buffer
+    
     imageStore(accumulationImage, pixelCoords, accumulated);
-
-    // Gamma correct for output display
+  
     vec3 gammaCorrected = toSRGB(accumulated.rgb);
-
     imageStore(outputImage, pixelCoords, vec4(gammaCorrected, 1.0));
 }

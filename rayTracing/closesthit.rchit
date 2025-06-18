@@ -88,6 +88,13 @@ mat3 buildOrthonormalBasis(vec3 n)
     return mat3(t, b, n); // Matrix transforms from tangent to world space
 }
 
+float schlick(float cosine, float refractIndex)
+{
+    float r0 = (1.0 - refractIndex) / (1.0 + refractIndex);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
+}
+
 void main()
 {
 
@@ -156,7 +163,93 @@ void main()
 	payload.colour = mat.albedo.rgb * newPayload.colour;
         return;
     }
+    else if(mat.matType == metal)
+    {
+	const int MAX_DEPTH = 5;
+	if (payload.depth >= MAX_DEPTH)
+	{
+    	    payload.colour = vec3(0.0);
+    	    return;
+	}
 
+	vec3 reflected = reflect(normalize(payload.rayDir), normal);
+	uint seed = randomSeed(gl_LaunchIDEXT.x + pc.frameIndex * 73856093, gl_LaunchIDEXT.y + pc.frameIndex * 19349663);
+	vec3 fuzzOffset = mat.fuzz * randomInUnitSphere(seed);
+	vec3 scatterDirection = normalize(reflected + fuzzOffset);
+	
+	if(dot(scatterDirection, normal) > 0.0)
+	{
+	    newPayload.rayDir = scatterDirection;
+	    newPayload.depth = payload.depth + 1;
+	    newPayload.colour = vec3(0.0);
+	    
+	    traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0, hitPos + 0.001 * normal, 0.001, scatterDirection, 10000.0, 1);
+	    
+	    payload.colour = mat.albedo.rgb * newPayload.colour;
+
+	}
+	else
+	{
+	    payload.colour = vec3(0.0);
+	}
+	return;
+    }
+  else if (mat.matType == dielectric)
+{
+    const int MAX_DEPTH = 5;
+    if (payload.depth >= MAX_DEPTH)
+    {
+        payload.colour = vec3(0.0);
+        return;
+    }
+
+    vec3 unitDir = normalize(payload.rayDir);
+    float refIdx = mat.refractionIndex;
+    vec3 outwardNormal;
+    float niOverNt;
+    float cosine;
+
+    if (dot(unitDir, normal) < 0.0) {
+        // Ray is outside the surface
+        outwardNormal = normal;
+        niOverNt = 1.0 / refIdx;
+        cosine = -dot(unitDir, normal);
+    } else {
+        // Ray is inside the surface
+        outwardNormal = -normal;
+        niOverNt = refIdx;
+        cosine = dot(unitDir, normal);
+    }
+
+    vec3 refracted = refract(unitDir, outwardNormal, niOverNt);
+
+    // Use Schlick approximation for reflect probability
+    float reflectProb = (length(refracted) > 0.0) ? schlick(cosine, refIdx) : 1.0;
+
+    uint seed = randomSeed(gl_LaunchIDEXT.x + pc.frameIndex * 73856093, gl_LaunchIDEXT.y + pc.frameIndex * 19349663);
+    float randVal = randomFloat(seed);
+
+    vec3 scatterDir;
+    if (randVal < reflectProb)
+        scatterDir = reflect(unitDir, normal);
+    else
+        scatterDir = refracted;
+
+    newPayload.rayDir = scatterDir;
+    newPayload.depth = payload.depth + 1;
+    newPayload.colour = vec3(0.0);
+
+    traceRayEXT(
+        topLevelAS, 
+        gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0,
+        hitPos + 0.001 * scatterDir, 0.001, scatterDir, 10000.0,
+        1
+    );
+
+    // For dielectrics, use the traced color without tinting
+    payload.colour = newPayload.colour;
+    return;
+}
     else
     {
 	//payload.colour = toSRGB(texColour);

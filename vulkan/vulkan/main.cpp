@@ -456,9 +456,9 @@ private:
 
 	camera camera
 	{
-		glm::vec3(1.98333, 0.599127, -4.14501),   // position
-		glm::radians(-163.23f),					  // yaw
-		glm::radians(-16.86f),					  // pitch
+		glm::vec3(4.46082, 3.29564, 1.53025),     // position
+		glm::radians(-145.077f),				  // yaw
+		glm::radians(-14.051f),					  // pitch
 		2.0f,									  // speed
 		0.001f,									  // sensitivity
 		glm::vec3(0.0f),						  // front (will be set by updateCameraVectors)
@@ -562,7 +562,7 @@ private:
 		createAccumulationImageView();
 		loadModel();
 		//simpleDraw();
-		simpleSphere();
+		drawSpheres();
 		createVertexBuffer();
 		createIndexBuffer();
 		createAABBBuffer();
@@ -2170,13 +2170,161 @@ private:
 		indices = { 0, 1, 2, 2, 3, 0 };
 	}
 
-	void simpleSphere()
+	void drawSpheres()
 	{
-		spheres =
+		switch (5)
 		{
-			{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},
-			{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},
-		};
+		case 0:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},           //center
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},       //ground
+			};
+
+			materials =
+			{
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //center
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
+			};
+			break;
+
+		case 1:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},          //ground
+				{{0.0f, -1.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},             //left
+				{{0.0f, 1.0f, -4.5f}, 0.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},              //right
+			};
+
+			materials =
+			{
+				{{0.1f, 0.2f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},      //center
+				{{0.8f, 0.8f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},      //ground
+				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.3f, 0.0f, materialType::metal},           //left
+				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}            //right
+			};
+			break;
+		
+		case 2:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},          //ground
+				{{0.0f, -1.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},             //left
+				{{0.0f, 1.0f, -4.5f}, 0.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},              //right
+			};
+
+			materials =
+			{
+				{{0.1f, 0.2f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},      //center
+				{{0.8f, 0.8f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},      //ground
+				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.50f, materialType::dielectric},     //left
+				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}            //right
+			};
+			break;
+
+		case 3:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},          //ground
+				{{0.0f, -1.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},             //left
+				{{0.0f, 1.0f, -4.5f}, 0.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},              //right
+			};
+
+			materials =
+			{
+				{{0.1f, 0.2f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},           //center
+				{{0.8f, 0.8f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},           //ground
+				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.0f / 1.33f, materialType::dielectric},   //left
+				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}                 //right
+			};
+			break;
+
+		case 4:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},          //ground
+				{{0.0f, -1.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},             //left
+				{{0.0f, -1.0f, -4.5f}, 0.4f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},             //bubble
+				{{0.0f, 1.0f, -4.5f}, 0.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},              //right
+			};
+
+			materials =
+			{
+				{{0.1f, 0.2f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},         //center
+				{{0.8f, 0.8f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},         //ground
+				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.50f, materialType::dielectric},        //left
+				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.00/1.50f, materialType::dielectric},   //bubble
+				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}               //right
+			};
+			break;
+
+		case 5:
+			//ground sphere
+			spheres.push_back({ {0.0f, 0.0f, -1000.0f}, 1000.0f, {0.5f, 0.5f, 0.5f, 1.0f}, 0, {} });
+			materials.push_back({ {0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, lambertian, 0 });
+
+			//random spheres
+			for (int a = -11; a < 11; ++a)
+			{
+				for (int b = -11; b < 11; ++b)
+				{
+					float choose_mat = random_float();
+					glm::vec3 center = { a + 0.9f * random_float(), b + 0.9f * random_float(), 0.2f };
+
+					if (glm::length(center - glm::vec3(4.0f, 0.0f, 0.2f)) > 0.9f)
+					{
+						glm::vec4 color;
+						float fuzz = 0.0f;
+						float ir = 1.5f;
+						materialType type;
+
+						if (choose_mat < 0.8f)
+						{
+							//diffuse
+							glm::vec3 albedo = random_vec3() * random_vec3();
+							color = glm::vec4(albedo, 1.0f);
+							type = lambertian;
+						}
+						else if (choose_mat < 0.95f)
+						{
+							//metal
+							glm::vec3 albedo = random_vec3(0.5f, 1.0f);
+							color = glm::vec4(albedo, 1.0f);
+							fuzz = random_float(0.0f, 0.5f);
+							type = metal;
+						}
+						else
+						{
+							//glass
+							color = glm::vec4(1.0f);
+							type = dielectric;
+						}
+
+						uint32_t materialIndex = static_cast<uint32_t>(materials.size());
+						spheres.push_back({ center, 0.2f, color, materialIndex, {} });
+						materials.push_back({ color, fuzz, 1.0f / ir, type, 0 });
+					}
+				}
+			}
+
+			//three main spheres
+			spheres.push_back({ {0.0f, 0.0f, 1.0f}, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f}, static_cast<uint32_t>(materials.size()), {} });
+			materials.push_back({ {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 1.5f, dielectric, 0 });
+
+			spheres.push_back({ {-2.0f, 0.0f, 1.0f}, 1.0f, {0.4f, 0.2f, 0.1f, 1.0f}, static_cast<uint32_t>(materials.size()), {} });
+			materials.push_back({ {0.4f, 0.2f, 0.1f, 1.0f}, 0.0f, 0.0f, lambertian, 0 });
+
+			spheres.push_back({ {2.0f, 0.0f, 1.0f}, 1.0f, {0.7f, 0.6f, 0.5f, 1.0f}, static_cast<uint32_t>(materials.size()), {} });
+			materials.push_back({ {0.7f, 0.6f, 0.5f, 1.0f}, 0.0f, 0.0f, metal, 0 });
+			break;
+
+		default:
+			break;
+		}
 
 		for (auto& sphere : spheres)
 		{
@@ -2192,12 +2340,22 @@ private:
 
 			aabbs.push_back(aabb);
 		}
+	}
 
-		materials =
-		{
-			{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
-			{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian}
-		};
+	inline float random_float(float min = 0.0f, float max = 1.0f)
+	{
+		static thread_local std::mt19937 generator(std::random_device{}());
+		std::uniform_real_distribution<float> distribution(min, max);
+		return distribution(generator);
+	}
+
+	inline glm::vec3 random_vec3(float min = 0.0f, float max = 1.0f)
+	{
+		return glm::vec3(
+			random_float(min, max),
+			random_float(min, max),
+			random_float(min, max)
+		);
 	}
 
 	void loadModel()
@@ -3450,6 +3608,7 @@ private:
 		{
 			frameCounter++;
 		}
+		
 		updateUniformBuffer(currentFrame);
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
