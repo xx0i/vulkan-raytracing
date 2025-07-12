@@ -22,7 +22,8 @@ struct sphere
     vec4 colour;
     uint normalColouring;
     uint textured;
-    uint padding[2];
+    uint checkered;
+    uint padding;
 };
 
 const uint lambertian = 0;
@@ -145,6 +146,22 @@ void main()
         payload.colour = texColour;
         return;
     }
+    
+    if(sph.checkered == 1)
+    {
+        float scale = 5.0; // Adjust as needed for checker size
+        float sines = sin(scale * hitPos.x) * sin(scale * hitPos.y) * sin(scale * hitPos.z);
+
+        vec3 colourA = vec3(0.0, 0.0, 0.0); // Dark squares
+        vec3 colourB = vec3(1.0, 1.0, 1.0); // Light squares
+
+         if (sines < 0.0)
+            payload.colour = colourA;
+         else
+            payload.colour = colourB;
+
+        return;
+    } 
     
     if(mat.matType == lambertian)
     {

@@ -284,7 +284,8 @@ struct sphere
 	glm::vec4 colour;
 	uint32_t normalColouring;
 	uint32_t textured;
-	uint32_t padding[2];
+	uint32_t checkered;
+	uint32_t padding;
 };
 
 enum materialType : uint32_t
@@ -2323,16 +2324,18 @@ private:
 			materials.push_back({ {0.7f, 0.6f, 0.5f, 1.0f}, 0.0f, 0.0f, metal, 0 });
 			break;
 
-		case 6: //one textured and one large lambertian spheres
+		case 6: //one textured, one checkered, and one large lambertian spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 1},        //textured
+				{{0.0f, -1.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 1},    //checkered
 				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},       //ground
 			};
 
 			materials =
 			{
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //textured
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //checkered
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
 			};
 			break;
