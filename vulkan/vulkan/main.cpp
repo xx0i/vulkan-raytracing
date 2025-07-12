@@ -37,7 +37,7 @@ const uint32_t width = 800;
 const uint32_t height = 600;
 
 const std::string modelPath = "models/viking_room.obj";
-const std::string texturePath = "textures/viking_room.png";
+const std::string texturePath = "textures/earthmap.jpg";
 
 const int maxFramesInFlight = 2;
 
@@ -283,7 +283,8 @@ struct sphere
 	float radius;
 	glm::vec4 colour;
 	uint32_t normalColouring;
-	uint32_t padding[3];
+	uint32_t textured;
+	uint32_t padding[2];
 };
 
 enum materialType : uint32_t
@@ -562,7 +563,7 @@ private:
 		createAccumulationImageView();
 		loadModel();
 		//simpleDraw();
-		drawSpheres();
+		drawShapes();
 		createVertexBuffer();
 		createIndexBuffer();
 		createAABBBuffer();
@@ -2170,9 +2171,9 @@ private:
 		indices = { 0, 1, 2, 2, 3, 0 };
 	}
 
-	void drawSpheres()
+	void drawShapes()
 	{
-		switch (5)
+		switch (6)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2205,8 +2206,8 @@ private:
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}            //right
 			};
 			break;
-		
-		case 2: //two lambertian, one dieletric (glass), one metal sphere
+
+		case 2: //two lambertian, one dieletric (glass), one metal spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2224,7 +2225,7 @@ private:
 			};
 			break;
 
-		case 3: //two lambertian, one dieletric (air bubble), one metal sphere
+		case 3: //two lambertian, one dieletric (air bubble), one metal spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2242,7 +2243,7 @@ private:
 			};
 			break;
 
-		case 4: //two lambertian, one dieletric (hollow glass), one metal sphere
+		case 4: //two lambertian, one dieletric (hollow glass), one metal spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0},              //center
@@ -2257,7 +2258,7 @@ private:
 				{{0.1f, 0.2f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},         //center
 				{{0.8f, 0.8f, 0.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},         //ground
 				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.50f, materialType::dielectric},        //left
-				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.00/1.50f, materialType::dielectric},   //bubble
+				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.00 / 1.50f, materialType::dielectric},   //bubble
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}               //right
 			};
 			break;
@@ -2320,6 +2321,20 @@ private:
 
 			spheres.push_back({ {2.0f, 0.0f, 1.0f}, 1.0f, {0.7f, 0.6f, 0.5f, 1.0f}, static_cast<uint32_t>(materials.size()), {} });
 			materials.push_back({ {0.7f, 0.6f, 0.5f, 1.0f}, 0.0f, 0.0f, metal, 0 });
+			break;
+
+		case 6: //one textured and one large lambertian spheres
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 1},        //textured
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0},       //ground
+			};
+
+			materials =
+			{
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //textured
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
+			};
 			break;
 
 		default:

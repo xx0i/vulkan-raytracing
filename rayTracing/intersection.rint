@@ -7,13 +7,18 @@ struct sphere
     float radius;
     vec4 colour;
     uint normalColouring;
-    uint materialIndex;
+    uint textured;
     uint padding[2];
 };
 
 layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
 
-hitAttributeEXT vec2 attribs;
+struct attributes
+{
+    vec2 uv;
+};
+
+hitAttributeEXT attributes attribs;
 
 void main()
 {
@@ -34,6 +39,14 @@ void main()
         float t1 = -b - sqrtD;
         if (t1 > 0.001)
         {
+
+	    vec3 hitPoint = rayOrigin + t1 * rayDir;
+	    vec3 p = (hitPoint - sph.center) / sph.radius;
+	    
+	    float u = 0.5 + atan(p.x, p.y) / (2.0 * 3.14159265359);
+            float v = 0.5 - asin(p.z) / 3.14159265359;
+	    attribs.uv = vec2(u, v);
+
             reportIntersectionEXT(t1, 0);
             return;
         }
@@ -41,6 +54,14 @@ void main()
         float t2 = -b + sqrtD;
         if (t2 > 0.001)
         {
+
+   	    vec3 hitPoint = rayOrigin + t2 * rayDir;
+	    vec3 p = (hitPoint - sph.center) / sph.radius;
+	    
+	    float u = 0.5 + atan(p.x, p.y) / (2.0 * 3.14159265359);
+            float v = 0.5 - asin(p.z) / 3.14159265359;
+	    attribs.uv = vec2(u, v);
+
             reportIntersectionEXT(t2, 0);
             return;
         }

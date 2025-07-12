@@ -1,8 +1,8 @@
 ﻿  main.cpp
   GLM_GTX_hash requires C++11 standard library support
-C:\full sail\vulkan\vulkan\vulkan\main.cpp(520,17): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
-C:\full sail\vulkan\vulkan\vulkan\main.cpp(521,23): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
-C:\full sail\vulkan\vulkan\vulkan\main.cpp(2260,42): warning C4305: 'initializing': truncation from 'double' to 'float'
+C:\full sail\vulkan\vulkan\vulkan\main.cpp(521,17): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+C:\full sail\vulkan\vulkan\vulkan\main.cpp(522,23): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+C:\full sail\vulkan\vulkan\vulkan\main.cpp(2261,43): warning C4305: 'initializing': truncation from 'double' to 'float'
 LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library
   vulkan.vcxproj -> C:\full sail\vulkan\vulkan\x64\Debug\vulkan.exe
   'pwsh.exe' is not recognized as an internal or external command,

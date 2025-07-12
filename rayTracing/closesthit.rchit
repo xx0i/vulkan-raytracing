@@ -21,7 +21,8 @@ struct sphere
     float radius;
     vec4 colour;
     uint normalColouring;
-    uint padding[3];
+    uint textured;
+    uint padding[2];
 };
 
 const uint lambertian = 0;
@@ -57,7 +58,12 @@ struct rayPayload
 layout(location = 0) rayPayloadInEXT rayPayload payload;
 layout(location = 1) rayPayloadEXT rayPayload newPayload;
 
-hitAttributeEXT vec2 attribs;
+struct attributes
+{
+    vec2 uv;
+};
+
+hitAttributeEXT attributes attribs;
 
 layout(push_constant) uniform PushConstants 
 {
@@ -110,8 +116,8 @@ void main()
     vec2 texCoord1 = vertices[index1].texCoord;
     vec2 texCoord2 = vertices[index2].texCoord;
 
-    float u = attribs.x;
-    float v = attribs.y;
+    float u = attribs.uv.x;
+    float v = attribs.uv.y;
     float w = 1.0 - u - v;
 
     vec2 texCoord = w * texCoord0 + u * texCoord1 + v * texCoord2;
@@ -130,6 +136,14 @@ void main()
 	vec3 normalColour = 0.5 * (normal + vec3(1.0));
 	payload.colour = normalColour;
  	return;
+    }
+
+    if (sph.textured == 1)
+    {
+        vec2 uv = attribs.uv;
+	vec3 texColour = texture(textureSampler, uv).rgb;
+        payload.colour = texColour;
+        return;
     }
     
     if(mat.matType == lambertian)
