@@ -4,6 +4,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "random.glsl"
+#include "perlinNoise.glsl"
 
 struct vertex 
 {
@@ -23,7 +24,7 @@ struct sphere
     uint normalColouring;
     uint textured;
     uint checkered;
-    uint padding;
+    uint perlinNoise;
 };
 
 const uint lambertian = 0;
@@ -163,6 +164,25 @@ void main()
         return;
     } 
     
+    if(sph.perlinNoise == 1)
+    {
+	float scale = 5.0;
+	float frequency = 3.0;
+	float turbulenceAmplitude = 5.0;
+
+	float marble = marbleTexture(scale * hitPos, frequency, turbulenceAmplitude);
+
+	marble = marble * 0.5 + 0.5;
+
+	vec3 colorA = vec3(1.0, 1.0, 1.0);
+	vec3 colorB = vec3(0.0, 0.0, 0.0);
+
+	vec3 finalColor = mix(colorA, colorB, marble);
+
+	payload.colour = finalColor;
+	return;
+    }
+
     if(mat.matType == lambertian)
     {
 	const int MAX_DEPTH = 5;

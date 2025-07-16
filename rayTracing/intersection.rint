@@ -9,7 +9,7 @@ struct sphere
     uint normalColouring;
     uint textured;
     uint checkered;
-    uint padding;
+    uint perlinNoise;
 };
 
 layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;

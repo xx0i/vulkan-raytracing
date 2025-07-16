@@ -285,7 +285,7 @@ struct sphere
 	uint32_t normalColouring;
 	uint32_t textured;
 	uint32_t checkered;
-	uint32_t padding;
+	uint32_t perlinNoise;
 };
 
 enum materialType : uint32_t
@@ -2174,7 +2174,7 @@ private:
 
 	void drawShapes()
 	{
-		switch (6)
+		switch (7)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2336,6 +2336,20 @@ private:
 			{
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //textured
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //checkered
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
+			};
+			break;
+
+		case 7:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 1},  //perlin noise
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0, 0, 0, 1},       //ground
+			};
+
+			materials =
+			{
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //perlin noise
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
 			};
 			break;

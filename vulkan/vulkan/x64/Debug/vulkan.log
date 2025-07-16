@@ -3,7 +3,6 @@
 C:\full sail\vulkan\vulkan\vulkan\main.cpp(522,17): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
 C:\full sail\vulkan\vulkan\vulkan\main.cpp(523,23): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
 C:\full sail\vulkan\vulkan\vulkan\main.cpp(2262,43): warning C4305: 'initializing': truncation from 'double' to 'float'
-LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library
   vulkan.vcxproj -> C:\full sail\vulkan\vulkan\x64\Debug\vulkan.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.
