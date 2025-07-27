@@ -56,7 +56,9 @@ const std::vector<const char*> deviceExtensions =
 	VK_KHR_SPIRV_1_4_EXTENSION_NAME,
 	VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
 	VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-	VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
+	VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+	VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -277,6 +279,12 @@ struct camera
 	glm::vec3 right;
 };
 
+enum geometryType : uint32_t
+{
+	sphereShape = 0,
+	quadShape = 1
+};
+
 struct sphere
 {
 	glm::vec3 center;
@@ -286,6 +294,16 @@ struct sphere
 	uint32_t textured;
 	uint32_t checkered;
 	uint32_t perlinNoise;
+};
+
+struct quad
+{
+	glm::vec3 origin;
+	float pad0;
+	glm::vec3 edgeU;
+	float pad1;
+	glm::vec3 edgeV;
+	float pad2;
 };
 
 enum materialType : uint32_t
@@ -456,6 +474,16 @@ private:
 	VkDeviceMemory materialBufferMemory;
 	VkDeviceAddress materialAddress;
 
+	std::vector<quad> quads;
+	VkBuffer quadBuffer;
+	VkDeviceMemory quadBufferMemory;
+	VkDeviceAddress quadAddress;
+
+	std::vector<geometryType> geoTypes;
+	VkBuffer geoTypeBuffer;
+	VkDeviceMemory geoTypeBufferMemory;
+	VkDeviceAddress geoTypeAddress;
+
 	camera camera
 	{
 		glm::vec3(4.46082, 3.29564, 1.53025),     // position
@@ -568,8 +596,16 @@ private:
 		createVertexBuffer();
 		createIndexBuffer();
 		createAABBBuffer();
-		createSphereBuffer();
+		if (spheres.size() > 0)
+		{
+			createSphereBuffer();
+		}
 		createMaterialBuffer();
+		if (quads.size() > 0)
+		{
+			createQuadBuffer();
+		}
+		createGeoTypeBuffer();
 		createAccerlerationStructures();
 		createUniformBuffer();
 		createShaderBindingTables();
@@ -694,6 +730,12 @@ private:
 		vkDestroyBuffer(device, materialBuffer, nullptr);
 		vkFreeMemory(device, materialBufferMemory, nullptr);
 
+		vkDestroyBuffer(device, quadBuffer, nullptr);
+		vkFreeMemory(device, quadBufferMemory, nullptr);
+
+		vkDestroyBuffer(device, geoTypeBuffer, nullptr);
+		vkFreeMemory(device, geoTypeBufferMemory, nullptr);
+
 		vkDestroyBuffer(device, blasBuffer, nullptr);
 		vkFreeMemory(device, blasMemory, nullptr);
 		DestroyAccelerationStructureKHR(device, blas, nullptr);
@@ -775,13 +817,25 @@ private:
 		createInfo.ppEnabledExtensionNames = extensions.data();
 
 		VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+		VkValidationFeaturesEXT validationFeatures{};
+		std::vector<VkValidationFeatureEnableEXT> enables = {
+			VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT
+		};
+
 		if (enableValidationLayers)
 		{
 			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
 			createInfo.ppEnabledLayerNames = validationLayers.data();
 
 			populateDebugMessengerCreateInfo(debugCreateInfo);
-			createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&debugCreateInfo;
+
+			validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+			validationFeatures.enabledValidationFeatureCount = static_cast<uint32_t>(enables.size());
+			validationFeatures.pEnabledValidationFeatures = enables.data();
+
+			validationFeatures.pNext = &debugCreateInfo;
+
+			createInfo.pNext = &validationFeatures;
 		}
 		else
 		{
@@ -795,11 +849,12 @@ private:
 		}
 	}
 
+
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo)
 	{
 		createInfo = {};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-		createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+		createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
 		createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
 		createInfo.pfnUserCallback = debugCallback;
 	}
@@ -896,12 +951,17 @@ private:
 		sync2Features.synchronization2 = VK_TRUE;
 		sync2Features.pNext = &vulkan12Features;
 
+		VkPhysicalDeviceRobustness2FeaturesEXT robustness2Features{};
+		robustness2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+		robustness2Features.nullDescriptor = VK_TRUE;
+		robustness2Features.pNext = &sync2Features;
+
 		VkPhysicalDeviceFeatures2 deviceFeatures2{};
 		deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		deviceFeatures2.features = {};
 		deviceFeatures2.features.samplerAnisotropy = VK_TRUE;
 		deviceFeatures2.features.sampleRateShading = VK_TRUE;
-		deviceFeatures2.pNext = &sync2Features;
+		deviceFeatures2.pNext = &robustness2Features;
 
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1158,9 +1218,22 @@ private:
 		materialBinding.descriptorCount = 1;
 		materialBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		std::array<VkDescriptorSetLayoutBinding, 8> bindings =
+		VkDescriptorSetLayoutBinding quadBinding{};
+		quadBinding.binding = 8;
+		quadBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		quadBinding.descriptorCount = 1;
+		quadBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+		VkDescriptorSetLayoutBinding geoTypeBinding{};
+		geoTypeBinding.binding = 9;
+		geoTypeBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		geoTypeBinding.descriptorCount = 1;
+		geoTypeBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+		std::array<VkDescriptorSetLayoutBinding, 10> bindings =
 		{
-			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding, materialBinding
+			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding,
+			materialBinding, quadBinding, geoTypeBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -2174,7 +2247,7 @@ private:
 
 	void drawShapes()
 	{
-		switch (7)
+		switch (8)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2340,7 +2413,7 @@ private:
 			};
 			break;
 
-		case 7:
+		case 7: //two perlin noise (marbled) spheres
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 1},  //perlin noise
@@ -2351,6 +2424,35 @@ private:
 			{
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //perlin noise
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
+			};
+			break;
+
+		case 8: //5 walls forming an open cube with space between each wall
+			quads =
+			{
+				//left wall
+				{ { -1.0f, -0.25f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
+
+				//back wall
+				{ { -1.3535f, -0.8535f, 0.0f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
+				
+				//right wall
+				{ { 0.7677f, -1.75607f, 0.0f }, 0.0f, { 1.4142f, 1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
+
+				//floor
+				{ { -1.0f, -0.5f, -0.5f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f },
+
+				//ceiling
+				{ { -1.0f, -0.5f, 2.5f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f },
+			};
+
+			materials =
+			{
+				{{1.0f, 0.2f, 0.2f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.2f, 1.0f, 0.2f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.2f, 0.2f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.2f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.8f, 0.8f, 0.2f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
 			};
 			break;
 
@@ -2371,6 +2473,33 @@ private:
 			};
 
 			aabbs.push_back(aabb);
+			geoTypes.push_back(geometryType::sphereShape);
+		}
+
+		for (auto& quad : quads)
+		{
+			glm::vec3 p0 = quad.origin;
+			glm::vec3 p1 = quad.origin + quad.edgeU;
+			glm::vec3 p2 = quad.origin + quad.edgeV;
+			glm::vec3 p3 = quad.origin + quad.edgeU + quad.edgeV;
+
+			glm::vec3 minCorner = glm::min(glm::min(p0, p1), glm::min(p2, p3));
+			glm::vec3 maxCorner = glm::max(glm::max(p0, p1), glm::max(p2, p3));
+
+			float pad = 0.001f;
+
+			VkAabbPositionsKHR aabb =
+			{
+				minCorner.x - pad,
+				minCorner.y - pad,
+				minCorner.z - pad,
+				maxCorner.x + pad,
+				maxCorner.y + pad,
+				maxCorner.z + pad
+			};
+
+			aabbs.push_back(aabb);
+			geoTypes.push_back(geometryType::quadShape);
 		}
 	}
 
@@ -2563,6 +2692,56 @@ private:
 		materialAddress = findBufferDeviceAddress(device, materialBuffer);
 
 		copyBuffer(stagingBuffer, materialBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createQuadBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(quads[0]) * quads.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, quads.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, quadBuffer, quadBufferMemory);
+
+		quadAddress = findBufferDeviceAddress(device, quadBuffer);
+
+		copyBuffer(stagingBuffer, quadBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createGeoTypeBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(geoTypes[0]) * geoTypes.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, geoTypes.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, geoTypeBuffer, geoTypeBufferMemory);
+
+		geoTypeAddress = findBufferDeviceAddress(device, geoTypeBuffer);
+
+		copyBuffer(stagingBuffer, geoTypeBuffer, bufferSize);
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -2862,7 +3041,7 @@ private:
 		descriptorPoolSizes[5].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
 		descriptorPoolSizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 4);
+		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 6);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2998,14 +3177,24 @@ private:
 			VkDescriptorBufferInfo sphereBufferInfo{};
 			sphereBufferInfo.buffer = sphereBuffer;
 			sphereBufferInfo.offset = 0;
-			sphereBufferInfo.range = sizeof(spheres[0]) * spheres.size();
+			sphereBufferInfo.range = VK_WHOLE_SIZE;
 
 			VkDescriptorBufferInfo materialBufferInfo{};
 			materialBufferInfo.buffer = materialBuffer;
 			materialBufferInfo.offset = 0;
 			materialBufferInfo.range = sizeof(materials[0]) * materials.size();
 
-			std::array<VkWriteDescriptorSet, 8> writeDescriptorSets{};
+			VkDescriptorBufferInfo quadBufferInfo{};
+			quadBufferInfo.buffer = quadBuffer;
+			quadBufferInfo.offset = 0;
+			quadBufferInfo.range = VK_WHOLE_SIZE;
+
+			VkDescriptorBufferInfo geoTypeBufferInfo{};
+			geoTypeBufferInfo.buffer = geoTypeBuffer;
+			geoTypeBufferInfo.offset = 0;
+			geoTypeBufferInfo.range = sizeof(geoTypes[0]) * geoTypes.size();
+
+			std::array<VkWriteDescriptorSet, 10> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = rayTracingDescriptorSets[i];
@@ -3066,6 +3255,20 @@ private:
 			writeDescriptorSets[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 			writeDescriptorSets[7].descriptorCount = 1;
 			writeDescriptorSets[7].pBufferInfo = &materialBufferInfo;
+
+			writeDescriptorSets[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[8].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[8].dstBinding = 8;
+			writeDescriptorSets[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[8].descriptorCount = 1;
+			writeDescriptorSets[8].pBufferInfo = &quadBufferInfo;
+
+			writeDescriptorSets[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[9].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[9].dstBinding = 9;
+			writeDescriptorSets[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[9].descriptorCount = 1;
+			writeDescriptorSets[9].pBufferInfo = &geoTypeBufferInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -3525,6 +3728,7 @@ private:
 	void updateUniformBuffer(uint32_t currentImage)
 	{
 		uniformBufferObject ubo{};
+		ubo.model = glm::mat4(-1.0f);
 		ubo.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
 		ubo.proj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
 		ubo.proj[1][1] *= -1;
@@ -3640,7 +3844,7 @@ private:
 		{
 			frameCounter++;
 		}
-		
+
 		updateUniformBuffer(currentFrame);
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);

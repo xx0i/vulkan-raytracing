@@ -16,6 +16,9 @@ struct vertex
     vec2 _pad2;
 };
 
+const uint sphereShape = 0;
+const uint quadShape = 1;
+
 struct sphere 
 {
     vec3 center;
@@ -25,6 +28,16 @@ struct sphere
     uint textured;
     uint checkered;
     uint perlinNoise;
+};
+
+struct quad
+{
+    vec3 origin;
+    float pad0; 
+    vec3 edgeU;
+    float pad1; 
+    vec3 edgeV;
+    float pad2; 
 };
 
 const uint lambertian = 0;
@@ -49,6 +62,8 @@ layout(set = 0, binding = 4) readonly buffer VertexBuffer {vertex vertices[];};
 layout(set = 0, binding = 5) readonly buffer IndexBuffer {uint indices[];};
 layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
 layout(set = 0, binding = 7) buffer materialBuffer {material m[];}materials;
+layout(set = 0, binding = 8) buffer quadBuffer {quad q[];}quads;
+layout(set = 0, binding = 9) buffer geoTypeBuffer {uint gt[];}geoTypes;
 
 struct rayPayload 
 {
@@ -128,59 +143,71 @@ void main()
     vec3 vertexColour = w * colour0 + u * colour1 + v * colour2;
 
     sphere sph = spheres.s[gl_PrimitiveID];
+    uint geoType = geoTypes.gt[gl_PrimitiveID];
     material mat = materials.m[gl_PrimitiveID];    
 
     vec3 hitPos = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
-    vec3 normal = normalize(hitPos - sph.center);
+    vec3 normal;
 
-    if (sph.normalColouring == 1)
-    {	
-	vec3 normalColour = 0.5 * (normal + vec3(1.0));
-	payload.colour = normalColour;
- 	return;
-    }
-
-    if (sph.textured == 1)
+    if(geoType == sphereShape)
     {
-        vec2 uv = attribs.uv;
-	vec3 texColour = texture(textureSampler, uv).rgb;
-        payload.colour = texColour;
-        return;
-    }
+	sphere sph = spheres.s[gl_PrimitiveID];
+	normal = normalize(hitPos - sph.center);
+
+	if (sph.normalColouring == 1)
+	{	
+	    vec3 normalColour = 0.5 * (normal + vec3(1.0));
+	    payload.colour = normalColour;
+ 	    return;
+    	}
+
+	if (sph.textured == 1)
+	{
+            vec2 uv = attribs.uv;
+	    vec3 texColour = texture(textureSampler, uv).rgb;
+            payload.colour = texColour;
+            return;
+	}
     
-    if(sph.checkered == 1)
-    {
-        float scale = 5.0; // Adjust as needed for checker size
-        float sines = sin(scale * hitPos.x) * sin(scale * hitPos.y) * sin(scale * hitPos.z);
+	if(sph.checkered == 1)
+	{
+            float scale = 5.0; // Adjust as needed for checker size
+            float sines = sin(scale * hitPos.x) * sin(scale * hitPos.y) * sin(scale * hitPos.z);
 
-        vec3 colourA = vec3(0.0, 0.0, 0.0); // Dark squares
-        vec3 colourB = vec3(1.0, 1.0, 1.0); // Light squares
+            vec3 colourA = vec3(0.0, 0.0, 0.0); // Dark squares
+            vec3 colourB = vec3(1.0, 1.0, 1.0); // Light squares
 
-         if (sines < 0.0)
-            payload.colour = colourA;
-         else
-            payload.colour = colourB;
+            if (sines < 0.0)
+		payload.colour = colourA;
+            else
+           	payload.colour = colourB;
 
-        return;
-    } 
+            return;
+	} 
     
-    if(sph.perlinNoise == 1)
-    {
+	if(sph.perlinNoise == 1)
+	{
 	float scale = 5.0;
-	float frequency = 3.0;
-	float turbulenceAmplitude = 5.0;
+	    float frequency = 3.0;
+	    float turbulenceAmplitude = 5.0;
 
-	float marble = marbleTexture(scale * hitPos, frequency, turbulenceAmplitude);
+	    float marble = marbleTexture(scale * hitPos, frequency, turbulenceAmplitude);
 
-	marble = marble * 0.5 + 0.5;
+	    marble = marble * 0.5 + 0.5;
 
-	vec3 colorA = vec3(1.0, 1.0, 1.0);
-	vec3 colorB = vec3(0.0, 0.0, 0.0);
+	    vec3 colorA = vec3(1.0, 1.0, 1.0);
+	    vec3 colorB = vec3(0.0, 0.0, 0.0);
 
-	vec3 finalColor = mix(colorA, colorB, marble);
+	    vec3 finalColor = mix(colorA, colorB, marble);
 
-	payload.colour = finalColor;
-	return;
+	    payload.colour = finalColor;
+	    return;
+	}
+    }
+    if(geoType == quadShape)
+    {
+        quad q = quads.q[gl_PrimitiveID];
+	normal = normalize(cross(q.edgeU.xyz, q.edgeV.xyz));
     }
 
     if(mat.matType == lambertian)

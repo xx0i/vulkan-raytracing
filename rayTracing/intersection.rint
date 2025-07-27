@@ -1,6 +1,9 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 
+const uint sphereShape = 0;
+const uint quadShape = 1;
+
 struct sphere 
 {
     vec3 center;
@@ -12,7 +15,19 @@ struct sphere
     uint perlinNoise;
 };
 
+struct quad
+{
+    vec3 origin;
+    float pad0; 
+    vec3 edgeU;
+    float pad1; 
+    vec3 edgeV;
+    float pad2; 
+};
+
 layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
+layout(set = 0, binding = 8) buffer quadBuffer {quad q[];}quads;
+layout(set = 0, binding = 9) buffer geoTypeBuffer {uint gt[];}geoTypes;
 
 struct attributes
 {
@@ -21,7 +36,8 @@ struct attributes
 
 hitAttributeEXT attributes attribs;
 
-void main()
+
+void sphereIntersection()
 {
     sphere sph = spheres.s[gl_PrimitiveID];
 
@@ -66,5 +82,63 @@ void main()
             reportIntersectionEXT(t2, 0);
             return;
         }
+    }
+}
+
+void quadIntersection()
+{
+    quad q = quads.q[gl_PrimitiveID];
+
+    vec3 rayOrigin = gl_WorldRayOriginEXT;
+    vec3 rayDir = gl_WorldRayDirectionEXT;
+
+    vec3 normal = cross(q.edgeU, q.edgeV);
+   
+    float normLen = length(normal);
+    if (normLen < 1e-6)
+    {
+        return;
+    }
+
+    normal = normal / normLen;
+
+    float denom = dot(rayDir, normal);
+
+    if (abs(denom) < 1e-6)
+    {
+        return;
+    }
+
+    float t = dot(q.origin - rayOrigin, normal) / denom;
+
+    if (t < 0.001)
+    {
+        return;
+    }
+
+    vec3 p = rayOrigin + t * rayDir;
+    vec3 local = p - q.origin;
+
+    float u = dot(local, q.edgeU) / dot(q.edgeU, q.edgeU);
+    float v = dot(local, q.edgeV) / dot(q.edgeV, q.edgeV);
+
+    if (u >= -1e-5 && u <= 1.0 + 1e-5 && v >= -1e-5 && v <= 1.0 + 1e-5)
+    {
+        attribs.uv = vec2(u, v);
+        reportIntersectionEXT(t, 0);
+    }
+}
+void main()
+{
+    uint type = geoTypes.gt[gl_PrimitiveID];
+    
+    if(type == sphereShape)
+    {
+	sphereIntersection();
+    }
+    
+    if(type == quadShape)
+    {
+	quadIntersection();
     }
 }
