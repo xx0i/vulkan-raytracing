@@ -306,6 +306,26 @@ struct quad
 	float pad2;
 };
 
+struct aabbObject
+{
+	geometryType type;
+	uint32_t geoIndex;
+	uint32_t matIndex;
+	VkAabbPositionsKHR aabb;
+	VkAccelerationStructureKHR blas;
+	VkBuffer blasBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory blasMemory = VK_NULL_HANDLE;
+	VkDeviceAddress blasDeviceAddress = 0;
+};
+
+struct AabbObjectGPU
+{
+    uint32_t type;
+    uint32_t geoIndex;
+    uint32_t matIndex;
+    uint32_t pad0;
+};
+
 enum materialType : uint32_t
 {
 	lambertian = 0,
@@ -322,11 +342,20 @@ struct alignas(16) material
 	float refractionIndex;
 	materialType matType;
 	uint32_t padding;
+	glm::vec4 emission;
+	float padding2;
 };
+
 
 struct indexUniformBufferObject
 {
 	uint32_t imageIndex;
+};
+
+struct pushConstants 
+{
+	uint32_t frameIndex;
+	uint32_t missColour;
 };
 
 class application
@@ -483,6 +512,13 @@ private:
 	VkBuffer geoTypeBuffer;
 	VkDeviceMemory geoTypeBufferMemory;
 	VkDeviceAddress geoTypeAddress;
+	
+	std::vector<aabbObject> aabbObjects;
+	VkBuffer aabbObjectsBuffer;
+	VkDeviceMemory aabbObjectsBufferMemory;
+	VkDeviceAddress aabbObjectsAddress;
+
+	std::vector<AabbObjectGPU> gpuAabbs;
 
 	camera camera
 	{
@@ -511,6 +547,7 @@ private:
 	std::chrono::high_resolution_clock::time_point startTime = std::chrono::high_resolution_clock::now();
 
 	uint32_t frameCounter;
+	uint32_t missShaderColouring;
 
 	void windowInitalization()
 	{
@@ -606,6 +643,7 @@ private:
 			createQuadBuffer();
 		}
 		createGeoTypeBuffer();
+		createAabbObjectsBuffer();
 		createAccerlerationStructures();
 		createUniformBuffer();
 		createShaderBindingTables();
@@ -736,9 +774,28 @@ private:
 		vkDestroyBuffer(device, geoTypeBuffer, nullptr);
 		vkFreeMemory(device, geoTypeBufferMemory, nullptr);
 
+		vkDestroyBuffer(device, aabbObjectsBuffer, nullptr);
+		vkFreeMemory(device, aabbObjectsBufferMemory, nullptr);
+
 		vkDestroyBuffer(device, blasBuffer, nullptr);
 		vkFreeMemory(device, blasMemory, nullptr);
 		DestroyAccelerationStructureKHR(device, blas, nullptr);
+
+		for (auto& obj : aabbObjects)
+		{
+			if (obj.blas != VK_NULL_HANDLE)
+			{
+				DestroyAccelerationStructureKHR(device, obj.blas, nullptr);
+			}
+			if (obj.blasBuffer != VK_NULL_HANDLE)
+			{
+				vkDestroyBuffer(device, obj.blasBuffer, nullptr);
+			}
+			if (obj.blasMemory != VK_NULL_HANDLE)
+			{
+				vkFreeMemory(device, obj.blasMemory, nullptr);
+			}
+		}
 
 		vkDestroyBuffer(device, tlasBuffer, nullptr);
 		vkFreeMemory(device, tlasMemory, nullptr);
@@ -1230,10 +1287,16 @@ private:
 		geoTypeBinding.descriptorCount = 1;
 		geoTypeBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		std::array<VkDescriptorSetLayoutBinding, 10> bindings =
+		VkDescriptorSetLayoutBinding aabbObjectsBinding{};
+		aabbObjectsBinding.binding = 10;
+		aabbObjectsBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		aabbObjectsBinding.descriptorCount = 1;
+		aabbObjectsBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+		std::array<VkDescriptorSetLayoutBinding, 11> bindings =
 		{
 			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding,
-			materialBinding, quadBinding, geoTypeBinding
+			materialBinding, quadBinding, geoTypeBinding, aabbObjectsBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1464,14 +1527,22 @@ private:
 		auto rayGenShaderCode = readFile("rayTracing/rgen.spv");
 		auto missShaderCode = readFile("rayTracing/rmiss.spv");
 		auto closesthitShaderCode = readFile("rayTracing/rchit.spv");
+		auto quadClosesthitShaderCode = readFile("rayTracing/quadrchit.spv");
+		auto sphereClosesthitShaderCode = readFile("rayTracing/sphererchit.spv");
 		auto anyhitShaderCode = readFile("rayTracing/rahit.spv");
 		auto intersectionCode = readFile("rayTracing/rint.spv");
+		auto quadIntersectionCode = readFile("rayTracing/quad.spv");
+		auto sphereIntersectionCode = readFile("rayTracing/sphere.spv");
 
 		VkShaderModule rayGenShaderModule = createShaderModule(rayGenShaderCode);
 		VkShaderModule missShaderModule = createShaderModule(missShaderCode);
 		VkShaderModule closesthitShaderModule = createShaderModule(closesthitShaderCode);
+		VkShaderModule quadClosesthitShaderModule = createShaderModule(quadClosesthitShaderCode);
+		VkShaderModule sphereClosesthitShaderModule = createShaderModule(sphereClosesthitShaderCode);
 		VkShaderModule anyhitShaderModule = createShaderModule(anyhitShaderCode);
 		VkShaderModule intersectionShaderModule = createShaderModule(intersectionCode);
+		VkShaderModule quadIntersectionShaderModule = createShaderModule(quadIntersectionCode);
+		VkShaderModule sphereIntersectionShaderModule = createShaderModule(sphereIntersectionCode);
 
 		VkPipelineShaderStageCreateInfo rayGenShaderStageInfo{};
 		rayGenShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1491,6 +1562,18 @@ private:
 		closesthitShaderStageInfo.module = closesthitShaderModule;
 		closesthitShaderStageInfo.pName = "main";
 
+		VkPipelineShaderStageCreateInfo quadClosesthitShaderStageInfo{};
+		quadClosesthitShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		quadClosesthitShaderStageInfo.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		quadClosesthitShaderStageInfo.module = quadClosesthitShaderModule;
+		quadClosesthitShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo sphereClosesthitShaderStageInfo{};
+		sphereClosesthitShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		sphereClosesthitShaderStageInfo.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		sphereClosesthitShaderStageInfo.module =sphereClosesthitShaderModule;
+		sphereClosesthitShaderStageInfo.pName = "main";
+
 		VkPipelineShaderStageCreateInfo anyhitShaderStageInfo{};
 		anyhitShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		anyhitShaderStageInfo.stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
@@ -1503,8 +1586,21 @@ private:
 		intersectionShaderStageInfo.module = intersectionShaderModule;
 		intersectionShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo, anyhitShaderStageInfo,
-															intersectionShaderStageInfo };
+		VkPipelineShaderStageCreateInfo quadIntersectionShaderStageInfo{};
+		quadIntersectionShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		quadIntersectionShaderStageInfo.stage = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+		quadIntersectionShaderStageInfo.module = quadIntersectionShaderModule;
+		quadIntersectionShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo sphereIntersectionShaderStageInfo{};
+		sphereIntersectionShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		sphereIntersectionShaderStageInfo.stage = VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+		sphereIntersectionShaderStageInfo.module = sphereIntersectionShaderModule;
+		sphereIntersectionShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo, 
+															quadClosesthitShaderStageInfo, sphereClosesthitShaderStageInfo,	anyhitShaderStageInfo,
+															intersectionShaderStageInfo, quadIntersectionShaderStageInfo, sphereIntersectionShaderStageInfo };
 
 		VkRayTracingShaderGroupCreateInfoKHR rayGenStage{};
 		rayGenStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -1527,18 +1623,34 @@ private:
 		hitStages.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
 		hitStages.generalShader = VK_SHADER_UNUSED_KHR;
 		hitStages.closestHitShader = 2;
-		hitStages.anyHitShader = 3;
-		hitStages.intersectionShader = 4;
+		hitStages.anyHitShader = 5;
+		hitStages.intersectionShader = 6;
 
-		VkRayTracingShaderGroupCreateInfoKHR shaderGroups[] = { rayGenStage,	missStage, hitStages };
+		VkRayTracingShaderGroupCreateInfoKHR quadHitStage{};
+		quadHitStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+		quadHitStage.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
+		quadHitStage.generalShader = VK_SHADER_UNUSED_KHR;
+		quadHitStage.closestHitShader = 3;
+		quadHitStage.anyHitShader = 5;
+		quadHitStage.intersectionShader = 7;
+
+		VkRayTracingShaderGroupCreateInfoKHR sphereHitStage{};
+		sphereHitStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+		sphereHitStage.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
+		sphereHitStage.generalShader = VK_SHADER_UNUSED_KHR;
+		sphereHitStage.closestHitShader = 4;
+		sphereHitStage.anyHitShader = 5;
+		sphereHitStage.intersectionShader = 8;
+
+		VkRayTracingShaderGroupCreateInfoKHR shaderGroups[] = { rayGenStage, missStage, hitStages, quadHitStage, sphereHitStage };
 
 
 		std::array<VkDescriptorSetLayout, 2> layouts = { rayTracingDescriptorSetLayout, alphaDescriptorSetLayout };
 
 		VkPushConstantRange pushConstantRange{};
-		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR;
 		pushConstantRange.offset = 0;
-		pushConstantRange.size = sizeof(uint32_t);
+		pushConstantRange.size = sizeof(pushConstants);
 
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1566,8 +1678,12 @@ private:
 		vkDestroyShaderModule(device, rayGenShaderModule, nullptr);
 		vkDestroyShaderModule(device, missShaderModule, nullptr);
 		vkDestroyShaderModule(device, closesthitShaderModule, nullptr);
+		vkDestroyShaderModule(device, quadClosesthitShaderModule, nullptr);
+		vkDestroyShaderModule(device, sphereClosesthitShaderModule, nullptr);
 		vkDestroyShaderModule(device, anyhitShaderModule, nullptr);
 		vkDestroyShaderModule(device, intersectionShaderModule, nullptr);
+		vkDestroyShaderModule(device, quadIntersectionShaderModule, nullptr);
+		vkDestroyShaderModule(device, sphereIntersectionShaderModule, nullptr);
 	}
 
 	void createComputePipeline()
@@ -1651,7 +1767,7 @@ private:
 
 		uint32_t handleSize = rayTracingProperties.shaderGroupHandleSize;
 		uint32_t handleAlignment = (handleSize + rayTracingProperties.shaderGroupBaseAlignment - 1) & ~(rayTracingProperties.shaderGroupBaseAlignment - 1);
-		uint32_t groupCount = 3;
+		uint32_t groupCount = 5;
 		uint32_t sbtSize = groupCount * handleAlignment;
 
 		std::vector<uint8_t> shaderHandleStorage(sbtSize);
@@ -1683,7 +1799,7 @@ private:
 
 		hitRegion.deviceAddress = shaderBindingTableAddress + 2 * handleAlignment;
 		hitRegion.stride = handleAlignment;
-		hitRegion.size = handleAlignment;
+		hitRegion.size = 3 * handleAlignment;
 
 		callableRegion.deviceAddress = 0;
 		callableRegion.stride = 0;
@@ -2247,7 +2363,7 @@ private:
 
 	void drawShapes()
 	{
-		switch (8)
+		switch (9)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2261,6 +2377,9 @@ private:
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //center
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
 			};
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 1: //two lambertian, two metal spheres
@@ -2279,6 +2398,9 @@ private:
 				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.3f, 0.0f, materialType::metal},           //left
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}            //right
 			};
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 2: //two lambertian, one dieletric (glass), one metal spheres
@@ -2297,6 +2419,9 @@ private:
 				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.50f, materialType::dielectric},     //left
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}            //right
 			};
+			
+			missShaderColouring = 1;
+
 			break;
 
 		case 3: //two lambertian, one dieletric (air bubble), one metal spheres
@@ -2315,6 +2440,9 @@ private:
 				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.0f / 1.33f, materialType::dielectric},   //left
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}                 //right
 			};
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 4: //two lambertian, one dieletric (hollow glass), one metal spheres
@@ -2335,6 +2463,9 @@ private:
 				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.00 / 1.50f, materialType::dielectric},   //bubble
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}               //right
 			};
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 5: //random small spheres with three main spheres and a ground sphere
@@ -2395,6 +2526,9 @@ private:
 
 			spheres.push_back({ {2.0f, 0.0f, 1.0f}, 1.0f, {0.7f, 0.6f, 0.5f, 1.0f}, static_cast<uint32_t>(materials.size()), {} });
 			materials.push_back({ {0.7f, 0.6f, 0.5f, 1.0f}, 0.0f, 0.0f, metal, 0 });
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 6: //one textured, one checkered, and one large lambertian spheres
@@ -2411,6 +2545,9 @@ private:
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //checkered
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
 			};
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 7: //two perlin noise (marbled) spheres
@@ -2425,6 +2562,9 @@ private:
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //perlin noise
 				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
 			};
+
+			missShaderColouring = 1;
+
 			break;
 
 		case 8: //5 walls forming an open cube with space between each wall
@@ -2454,34 +2594,67 @@ private:
 				{{0.2f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
 				{{0.8f, 0.8f, 0.2f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
 			};
+
+			missShaderColouring = 1;
+
+			break;
+
+		case 9:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 1},  //perlin noise
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0, 0, 0, 1},       //ground
+			};
+
+			quads =
+			{
+				{ { 1.5f, -0.55f, -5.0f }, 0.0f, { -0.7071f,  -0.7071f, 0.0f }, 0.0f, { 0.0f, 0.0f, 1.0f }, 0.0f },
+			};
+
+			materials =
+			{
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //perlin noise
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
+				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f}
+			};
+
+			missShaderColouring = 0;
+
 			break;
 
 		default:
 			break;
 		}
 
-		for (auto& sphere : spheres)
+		for (uint32_t i = 0; i < spheres.size(); i++)
 		{
 			VkAabbPositionsKHR aabb =
 			{
-				sphere.center.x - sphere.radius,
-				sphere.center.y - sphere.radius,
-				sphere.center.z - sphere.radius,
-				sphere.center.x + sphere.radius,
-				sphere.center.y + sphere.radius,
-				sphere.center.z + sphere.radius
+				spheres[i].center.x - spheres[i].radius,
+				spheres[i].center.y - spheres[i].radius,
+				spheres[i].center.z - spheres[i].radius,
+				spheres[i].center.x + spheres[i].radius,
+				spheres[i].center.y + spheres[i].radius,
+				spheres[i].center.z + spheres[i].radius
 			};
 
 			aabbs.push_back(aabb);
 			geoTypes.push_back(geometryType::sphereShape);
+			
+			aabbObject obj{};
+			obj.type = geometryType::sphereShape;
+			obj.geoIndex = i;
+			obj.matIndex = i;
+			obj.aabb = aabb;
+			aabbObjects.push_back(obj);
 		}
 
-		for (auto& quad : quads)
+		for (uint32_t i = 0; i < quads.size(); i++)
 		{
-			glm::vec3 p0 = quad.origin;
-			glm::vec3 p1 = quad.origin + quad.edgeU;
-			glm::vec3 p2 = quad.origin + quad.edgeV;
-			glm::vec3 p3 = quad.origin + quad.edgeU + quad.edgeV;
+			glm::vec3 p0 = quads[i].origin;
+			glm::vec3 p1 = quads[i].origin + quads[i].edgeU;
+			glm::vec3 p2 = quads[i].origin + quads[i].edgeV;
+			glm::vec3 p3 = quads[i].origin + quads[i].edgeU + quads[i].edgeV;
 
 			glm::vec3 minCorner = glm::min(glm::min(p0, p1), glm::min(p2, p3));
 			glm::vec3 maxCorner = glm::max(glm::max(p0, p1), glm::max(p2, p3));
@@ -2500,6 +2673,13 @@ private:
 
 			aabbs.push_back(aabb);
 			geoTypes.push_back(geometryType::quadShape);
+
+			aabbObject obj{};
+			obj.type = geometryType::quadShape;
+			obj.geoIndex = i;
+			obj.matIndex = i + spheres.size();
+			obj.aabb = aabb;
+			aabbObjects.push_back(obj);
 		}
 	}
 
@@ -2747,10 +2927,60 @@ private:
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
+	void createAabbObjectsBuffer()
+	{
+		gpuAabbs.clear();
+		for (size_t i = 0; i < aabbObjects.size(); i++) {
+			AabbObjectGPU obj{};
+			obj.type = aabbObjects[i].type;
+			obj.geoIndex = aabbObjects[i].geoIndex;
+			obj.matIndex = aabbObjects[i].matIndex;
+
+			gpuAabbs.push_back(obj);
+		}
+
+		VkDeviceSize bufferSize = sizeof(gpuAabbs[0]) * gpuAabbs.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, gpuAabbs.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, aabbObjectsBuffer, aabbObjectsBufferMemory);
+
+		aabbObjectsAddress = findBufferDeviceAddress(device, aabbObjectsBuffer);
+
+		copyBuffer(stagingBuffer, aabbObjectsBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
 	void createAccerlerationStructures()
 	{
-		createBLASaabb();
-		createTLAS();
+		//createBLASaabb();
+		//createTLAS();
+		
+		for (size_t i = 0; i < aabbObjects.size(); i++)
+		{
+			aabbObjects[i].blas = createBLASForAABB(aabbObjects[i].aabb, aabbObjects[i].blasDeviceAddress, 
+				                                    aabbObjects[i].blasBuffer, aabbObjects[i].blasMemory);
+		}
+
+		for (auto& obj : aabbObjects) {
+			std::cout << "Object type: " << int(obj.type)
+				<< " BLAS device address: " << obj.blasDeviceAddress
+				<< " AABB min: " << obj.aabb.minX << "," << obj.aabb.minY << "," << obj.aabb.minZ
+				<< " max: " << obj.aabb.maxX << "," << obj.aabb.maxY << "," << obj.aabb.maxZ << "\n";
+		}
+
+		createMultiInstanceTLAS();
 	}
 
 	void createBLAStriangle()
@@ -2888,6 +3118,105 @@ private:
 		vkFreeMemory(device, scratchMemory, nullptr);
 		vkDestroyBuffer(device, scratchBuffer, nullptr);
 	}
+	
+	VkAccelerationStructureKHR createBLASForAABB(const VkAabbPositionsKHR& aabb, VkDeviceAddress& deviceAddr, VkBuffer& buffer, VkDeviceMemory& memory)
+	{
+		VkBuffer aabbUploadBuffer;
+		VkDeviceMemory aabbUploadMemory;
+		VkDeviceSize aabbSize = sizeof(VkAabbPositionsKHR);
+
+		createBuffer(aabbSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+			VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, aabbUploadBuffer, aabbUploadMemory);
+
+		void* mapped;
+		vkMapMemory(device, aabbUploadMemory, 0, aabbSize, 0, &mapped);
+		memcpy(mapped, &aabb, sizeof(VkAabbPositionsKHR));
+		vkUnmapMemory(device, aabbUploadMemory);
+
+		VkDeviceAddress aabbDeviceAddress = findBufferDeviceAddress(device, aabbUploadBuffer);
+
+		VkAccelerationStructureGeometryAabbsDataKHR aabbData{};
+		aabbData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
+		aabbData.data.deviceAddress = aabbDeviceAddress;
+		aabbData.stride = sizeof(VkAabbPositionsKHR);
+
+		VkAccelerationStructureGeometryKHR geometry{};
+		geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+		geometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
+		geometry.flags = 0;
+		geometry.geometry.aabbs = aabbData;
+
+		VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
+		buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+		buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		buildInfo.geometryCount = 1;
+		buildInfo.pGeometries = &geometry;
+		buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+
+		VkAccelerationStructureBuildSizesInfoKHR sizeInfo{};
+		sizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+		uint32_t primitiveCount = 1;
+		GetAccelerationStructureBuildSizesKHR(device,
+			VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+			&buildInfo,
+			&primitiveCount,
+			&sizeInfo);
+
+		VkBuffer blasBuffer;
+		VkDeviceMemory blasMemory;
+
+		createBuffer(sizeInfo.accelerationStructureSize,
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			blasBuffer, blasMemory);
+
+		VkAccelerationStructureCreateInfoKHR blasCreateInfo{};
+		blasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+		blasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		blasCreateInfo.size = sizeInfo.accelerationStructureSize;
+		blasCreateInfo.buffer = blasBuffer;
+
+		VkAccelerationStructureKHR blas;
+		CreateAccelerationStructureKHR(device, &blasCreateInfo, nullptr, &blas);
+
+		buildInfo.dstAccelerationStructure = blas;
+
+		VkBuffer scratchBuffer;
+		VkDeviceMemory scratchMemory;
+		createBuffer(sizeInfo.buildScratchSize,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			scratchBuffer, scratchMemory);
+
+		VkDeviceAddress scratchAddress = findBufferDeviceAddress(device, scratchBuffer);
+		buildInfo.scratchData.deviceAddress = scratchAddress;
+
+		VkAccelerationStructureBuildRangeInfoKHR rangeInfo{};
+		rangeInfo.primitiveCount = primitiveCount;
+		rangeInfo.primitiveOffset = 0;
+		rangeInfo.firstVertex = 0;
+		rangeInfo.transformOffset = 0;
+		const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfo = &rangeInfo;
+
+		VkCommandBuffer cmd = beginSingleTimeCommands();
+		CmdBuildAccelerationStructuresKHR(device, cmd, 1, &buildInfo, &pRangeInfo);
+		endSingleTimeCommands(cmd);
+
+		vkFreeMemory(device, scratchMemory, nullptr);
+		vkDestroyBuffer(device, scratchBuffer, nullptr);
+
+		vkFreeMemory(device, aabbUploadMemory, nullptr);
+		vkDestroyBuffer(device, aabbUploadBuffer, nullptr);
+
+		deviceAddr = findAccelerationStructureDeviceAddress(device, blas);
+		buffer = blasBuffer;
+		memory = blasMemory;
+
+		return blas;
+	}
 
 	void createTLAS()
 	{
@@ -2938,6 +3267,124 @@ private:
 		buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
 
 		uint32_t maxPrimitiveCount = 1;
+
+		GetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildGeometryInfo, &maxPrimitiveCount, &buildSizesInfo);
+
+		createBuffer(buildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			tlasBuffer, tlasMemory);
+
+		VkAccelerationStructureCreateInfoKHR tlasCreateInfo = {};
+		tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+		tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+		tlasCreateInfo.size = buildSizesInfo.accelerationStructureSize;
+		tlasCreateInfo.buffer = tlasBuffer;
+
+		CreateAccelerationStructureKHR(device, &tlasCreateInfo, nullptr, &tlas);
+
+		buildGeometryInfo.dstAccelerationStructure = tlas;
+
+		VkBuffer scratchBuffer;
+		VkDeviceMemory scratchMemory;
+
+		createBuffer(buildSizesInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, scratchBuffer, scratchMemory);
+
+		VkDeviceAddress scratchAddress = findBufferDeviceAddress(device, scratchBuffer);
+		buildGeometryInfo.scratchData.deviceAddress = scratchAddress;
+
+		VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+		buildRangeInfo.primitiveCount = maxPrimitiveCount;
+		buildRangeInfo.primitiveOffset = 0;
+		buildRangeInfo.firstVertex = 0;
+		buildRangeInfo.transformOffset = 0;
+
+		const VkAccelerationStructureBuildRangeInfoKHR* rangeInfo = &buildRangeInfo;
+
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		CmdBuildAccelerationStructuresKHR(device, commandBuffer, 1, &buildGeometryInfo, &rangeInfo);
+
+		endSingleTimeCommands(commandBuffer);
+
+		vkFreeMemory(device, scratchMemory, nullptr);
+		vkDestroyBuffer(device, scratchBuffer, nullptr);
+		vkFreeMemory(device, instanceMemory, nullptr);
+		vkDestroyBuffer(device, instanceBuffer, nullptr);
+	}
+
+	void createMultiInstanceTLAS()
+	{
+		std::vector<VkAccelerationStructureInstanceKHR> instances{};
+		instances.reserve(aabbObjects.size());
+
+		for (size_t i = 0; i < aabbObjects.size(); i++)
+		{
+			const auto& obj = aabbObjects[i];
+
+			VkAccelerationStructureInstanceKHR instance{};
+			VkTransformMatrixKHR identityTransform = {
+			{{1.0f, 0.0f, 0.0f, 0.0f},
+			{0.0f, 1.0f, 0.0f, 0.0f},
+			{0.0f, 0.0f, 1.0f, 0.0f}}
+			};
+			instance.transform = identityTransform;
+
+			instance.instanceCustomIndex = static_cast<uint32_t>(i);
+			instance.mask = 0xFF;
+
+			if (obj.type == geometryType::quadShape)
+			{
+				instance.instanceShaderBindingTableRecordOffset = 1;
+			}
+			else if (obj.type == geometryType::sphereShape)
+			{
+				instance.instanceShaderBindingTableRecordOffset = 2;
+			}
+			else
+			{
+				instance.instanceShaderBindingTableRecordOffset = 0;
+			}
+
+			instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+			instance.accelerationStructureReference = obj.blasDeviceAddress;
+
+			instances.push_back(instance);
+		}
+
+		VkBuffer instanceBuffer;
+		VkDeviceMemory instanceMemory;
+		VkDeviceSize bufferSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
+		createBuffer(bufferSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			instanceBuffer, instanceMemory);
+
+		void* data;
+		vkMapMemory(device, instanceMemory, 0, bufferSize, 0, &data);
+		memcpy(data, instances.data(), bufferSize);
+		vkUnmapMemory(device, instanceMemory);
+
+		VkDeviceAddress instanceAddress = findBufferDeviceAddress(device, instanceBuffer);
+
+		VkAccelerationStructureGeometryKHR geometry{};
+		geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+		geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+		geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+		geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+		geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+		geometry.geometry.instances.data.deviceAddress = instanceAddress;
+
+		VkAccelerationStructureBuildGeometryInfoKHR buildGeometryInfo{};
+		buildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+		buildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+		buildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		buildGeometryInfo.geometryCount = 1;
+		buildGeometryInfo.pGeometries = &geometry;
+		buildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+
+		VkAccelerationStructureBuildSizesInfoKHR buildSizesInfo = {};
+		buildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+		uint32_t maxPrimitiveCount = static_cast<uint32_t>(instances.size());
 
 		GetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildGeometryInfo, &maxPrimitiveCount, &buildSizesInfo);
 
@@ -3041,7 +3488,7 @@ private:
 		descriptorPoolSizes[5].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
 		descriptorPoolSizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 6);
+		descriptorPoolSizes[6].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 7);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3194,7 +3641,12 @@ private:
 			geoTypeBufferInfo.offset = 0;
 			geoTypeBufferInfo.range = sizeof(geoTypes[0]) * geoTypes.size();
 
-			std::array<VkWriteDescriptorSet, 10> writeDescriptorSets{};
+			VkDescriptorBufferInfo aabbObjectsBufferInfo{};
+			aabbObjectsBufferInfo.buffer = aabbObjectsBuffer;
+			aabbObjectsBufferInfo.offset = 0;
+			aabbObjectsBufferInfo.range = sizeof(gpuAabbs[0]) * gpuAabbs.size();
+
+			std::array<VkWriteDescriptorSet, 11> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = rayTracingDescriptorSets[i];
@@ -3269,6 +3721,13 @@ private:
 			writeDescriptorSets[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 			writeDescriptorSets[9].descriptorCount = 1;
 			writeDescriptorSets[9].pBufferInfo = &geoTypeBufferInfo;
+
+			writeDescriptorSets[10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[10].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[10].dstBinding = 10;
+			writeDescriptorSets[10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			writeDescriptorSets[10].descriptorCount = 1;
+			writeDescriptorSets[10].pBufferInfo = &aabbObjectsBufferInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -3598,8 +4057,8 @@ private:
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rayTracingPipelineLayout, 0, static_cast<uint32_t>(descriptorSetsToBind.size()), descriptorSetsToBind.data(),
 			0, nullptr);
 
-		uint32_t frameIndex = frameCounter;
-		vkCmdPushConstants(commandBuffer, rayTracingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(int), &frameIndex);
+		pushConstants pcData = { frameCounter, missShaderColouring };
+		vkCmdPushConstants(commandBuffer, rayTracingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR, 0, sizeof(pushConstants), &pcData);
 
 		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion, &hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
 
@@ -3851,7 +4310,6 @@ private:
 
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 
-		frameCounter++;
 		recordRayTracingCommandBuffer(commandBuffers[currentFrame], imageIndex);
 
 		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
