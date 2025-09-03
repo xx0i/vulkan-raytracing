@@ -1,0 +1,78 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_debug_printf : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+struct quad
+{
+    vec3 origin;
+    float pad0; 
+    vec3 edgeU;
+    float pad1; 
+    vec3 edgeV;
+    float pad2; 
+};
+
+struct aabbObject
+{
+    uint type;
+    uint geoIndex;
+    uint matIndex;
+    uint _pad0;
+};
+
+layout(set = 0, binding = 8) buffer quadBuffer {quad q[];}quads;
+layout(std430, set = 0, binding = 10) buffer aabbObjectsBuffer {aabbObject aabbObj[];}aabbObjs;
+
+struct attributes
+{
+    vec2 uv;
+};
+
+hitAttributeEXT attributes attribs;
+
+
+void main()
+{
+    aabbObject obj = aabbObjs.aabbObj[gl_InstanceCustomIndexEXT];
+    quad q = quads.q[obj.geoIndex];
+
+    vec3 rayOrigin = gl_WorldRayOriginEXT;
+    vec3 rayDir = gl_WorldRayDirectionEXT;
+
+    vec3 normal = cross(q.edgeU, q.edgeV);
+   
+    float normLen = length(normal);
+
+    if (normLen < 1e-6)
+    {
+        return;
+    }
+    normal = normal / normLen;
+
+    float denom = dot(rayDir, normal);
+
+    if (abs(denom) < 1e-6)
+    {
+        return;
+    }
+
+    float t = dot(q.origin - rayOrigin, normal) / denom;
+
+    if (t < 0.001)
+    {
+        return;
+    }
+
+    vec3 p = rayOrigin + t * rayDir;
+    vec3 local = p - q.origin;
+
+    float u = dot(local, q.edgeU) / dot(q.edgeU, q.edgeU);
+    float v = dot(local, q.edgeV) / dot(q.edgeV, q.edgeV);
+
+    if (u >= -1e-5 && u <= 1.0 + 1e-5 && v >= -1e-5 && v <= 1.0 + 1e-5)
+    {
+        attribs.uv = vec2(u, v);
+        reportIntersectionEXT(t, 0);
+    }
+}

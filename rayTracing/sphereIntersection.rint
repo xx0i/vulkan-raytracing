@@ -1,0 +1,83 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_debug_printf : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+struct sphere 
+{
+    vec3 center;
+    float radius;
+    vec4 colour;
+    uint normalColouring;
+    uint textured;
+    uint checkered;
+    uint perlinNoise;
+};
+
+struct aabbObject
+{
+    uint type;
+    uint geoIndex;
+    uint matIndex;
+    uint _pad0;
+};
+
+layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
+layout(std430, set = 0, binding = 10) buffer aabbObjectsBuffer {aabbObject aabbObj[];}aabbObjs;
+
+struct attributes
+{
+    vec2 uv;
+};
+
+hitAttributeEXT attributes attribs;
+
+
+void main()
+{
+    aabbObject obj = aabbObjs.aabbObj[gl_InstanceCustomIndexEXT];
+    sphere sph = spheres.s[obj.geoIndex];
+
+    vec3 rayOrigin = gl_WorldRayOriginEXT;
+    vec3 rayDir = gl_WorldRayDirectionEXT;
+
+    vec3 oc = rayOrigin - sph.center;
+    float b = dot(oc, rayDir);
+    float c = dot(oc, oc) - sph.radius * sph.radius;
+    float discriminant = b * b - c;
+
+    if (discriminant > 0.0)
+    {
+        float sqrtD = sqrt(discriminant);
+
+        float t1 = -b - sqrtD;
+        if (t1 > 0.001)
+        {
+
+	    vec3 hitPoint = rayOrigin + t1 * rayDir;
+	    vec3 p = (hitPoint - sph.center) / sph.radius;
+	    
+	    float u = 0.5 + atan(p.x, p.y) / (2.0 * 3.14159265359);
+            float v = 0.5 - asin(p.z) / 3.14159265359;
+	    attribs.uv = vec2(u, v);
+
+ 	    reportIntersectionEXT(t1, 0);
+            return;
+        }
+
+        float t2 = -b + sqrtD;
+        if (t2 > 0.001)
+        {
+
+   	    vec3 hitPoint = rayOrigin + t2 * rayDir;
+	    vec3 p = (hitPoint - sph.center) / sph.radius;
+	    
+	    float u = 0.5 + atan(p.x, p.y) / (2.0 * 3.14159265359);
+            float v = 0.5 - asin(p.z) / 3.14159265359;
+	    attribs.uv = vec2(u, v);
+
+            reportIntersectionEXT(t2, 0);
+            return;
+        }
+    }
+}
