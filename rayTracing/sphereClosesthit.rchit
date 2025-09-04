@@ -120,6 +120,7 @@ void main()
 	{	
 	    vec3 normalColour = 0.5 * (normal + vec3(1.0));
 	    payload.colour = normalColour;
+	    return;
     	}
 
 	if (sph.textured == 1)
@@ -138,9 +139,14 @@ void main()
             vec3 colourB = vec3(1.0, 1.0, 1.0); // Light squares
 
             if (sines < 0.0)
-		mat.albedo.rgb = colourA;
-            else
-           	mat.albedo.rgb = colourB;
+	    {
+		payload.colour = colourA;
+            }
+	    else
+	    {
+           	payload.colour = colourB;
+	    }
+	     return;
 	} 
     
 	if(sph.perlinNoise == 1)

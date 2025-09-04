@@ -3144,7 +3144,7 @@ private:
 		VkAccelerationStructureGeometryKHR geometry{};
 		geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
 		geometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
-		geometry.flags = 0;
+		geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
 		geometry.geometry.aabbs = aabbData;
 
 		VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
@@ -4279,7 +4279,7 @@ private:
 		}
 		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
 		{
-			throw std::runtime_error("fauked to acquire swap chain image");
+			throw std::runtime_error("failed to acquire swap chain image");
 		}
 
 

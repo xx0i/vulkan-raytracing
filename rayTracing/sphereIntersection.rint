@@ -48,6 +48,7 @@ void main()
 
     if (discriminant > 0.0)
     {
+
         float sqrtD = sqrt(discriminant);
 
         float t1 = -b - sqrtD;
@@ -61,8 +62,7 @@ void main()
             float v = 0.5 - asin(p.z) / 3.14159265359;
 	    attribs.uv = vec2(u, v);
 
- 	    reportIntersectionEXT(t1, 0);
-            return;
+	    reportIntersectionEXT(t1, 0);
         }
 
         float t2 = -b + sqrtD;
