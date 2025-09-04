@@ -2363,7 +2363,7 @@ private:
 
 	void drawShapes()
 	{
-		switch (9)
+		switch (10)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2621,6 +2621,32 @@ private:
 			missShaderColouring = 0;
 
 			break;
+
+		case 10:
+			spheres =
+			{
+				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 1},  //perlin noise
+				{{0.0f, -1.0f, -100.5f}, 95.5f, {0.0f, 1.0f, 0.0f, 1.0f}, 0, 0, 0, 1},       //ground
+				{{0.0f, 0.0f, -2.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 0},  //light
+			};
+
+			quads =
+			{
+				{ { 1.5f, -0.55f, -5.0f }, 0.0f, { -0.7071f,  -0.7071f, 0.0f }, 0.0f, { 0.0f, 0.0f, 1.0f }, 0.0f },
+			};
+
+			materials =
+			{
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //perlin noise
+				{{0.5f, 0.5f, 0.5f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},   //ground
+				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f},
+				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f}
+			};
+
+			missShaderColouring = 0;
+
+			break;
+
 
 		default:
 			break;

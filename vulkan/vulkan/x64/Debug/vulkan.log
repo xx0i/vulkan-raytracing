@@ -3,7 +3,7 @@
 C:\full sail\vulkan\vulkan\vulkan\main.cpp(587,17): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
 C:\full sail\vulkan\vulkan\vulkan\main.cpp(588,23): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
 C:\full sail\vulkan\vulkan\vulkan\main.cpp(2463,43): warning C4305: 'initializing': truncation from 'double' to 'float'
-C:\full sail\vulkan\vulkan\vulkan\main.cpp(2680,21): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
+C:\full sail\vulkan\vulkan\vulkan\main.cpp(2706,21): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
   vulkan.vcxproj -> C:\full sail\vulkan\vulkan\x64\Debug\vulkan.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.
