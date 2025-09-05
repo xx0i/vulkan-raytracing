@@ -2363,7 +2363,7 @@ private:
 
 	void drawShapes()
 	{
-		switch (10)
+		switch (11)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2647,6 +2647,41 @@ private:
 
 			break;
 
+		case 11:
+			quads =
+			{
+				//left wall
+				{ { -1.3535f, -0.8535f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
+
+				//back wall
+				{ { -1.3535f, -0.8535f, 2.0f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, -2.0f }, 0.0f },
+
+				//right wall
+				{ { 0.0607f, -2.2677f, 2.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, -2.0f }, 0.0f },
+
+				//floor
+				{ { -1.3535f, -0.8535f, 0.0f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f },
+
+				//ceiling
+				{ { -1.3535f, -0.8535f, 2.0f }, 0.0f, {  1.4142f,  1.4142f, 0.0f }, 0.0f, {  1.4142f, -1.4142f, 0.0f }, 0.0f },
+
+				//light
+				{ { 0.0f, -0.35f, 1.9999f }, 0.0f,{ 0.5657f, -0.5657f, 0.0f }, 0.0f, { -0.5657f,  -0.5657f, 0.0f }, 0.0f },
+			};
+
+			materials =
+			{
+				{{0.12f, 0.45f, 0.15f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.65f, 0.05f, 0.05f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f},
+			};
+
+			missShaderColouring = 0;
+
+			break;
 
 		default:
 			break;

@@ -253,8 +253,4 @@ if (length(attenuation) < 0.001) {
 	}
         return;
     }
-if (mat.matType != diffuseLight) {
-    payload.colour = vec3(0.0);
-    return;
-}
 }
