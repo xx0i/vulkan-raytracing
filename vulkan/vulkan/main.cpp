@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -2363,7 +2363,7 @@ private:
 
 	void drawShapes()
 	{
-		switch (11)
+		switch (12)
 		{
 		case 0: //two simple lambertian spheres
 			spheres =
@@ -2683,6 +2683,46 @@ private:
 
 			break;
 
+		case 12:
+			quads =
+			{
+				//left wall
+				{ { -1.3535f, -0.8535f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
+
+				//back wall
+				{ { -1.3535f, -0.8535f, 2.0f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, -2.0f }, 0.0f },
+
+				//right wall
+				{ { 0.0607f, -2.2677f, 2.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, -2.0f }, 0.0f },
+
+				//floor
+				{ { -1.3535f, -0.8535f, 0.0f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 1.4142f,  1.4142f, 0.0f }, 0.0f },
+
+				//ceiling
+				{ { -1.3535f, -0.8535f, 2.0f }, 0.0f, {  1.4142f,  1.4142f, 0.0f }, 0.0f, {  1.4142f, -1.4142f, 0.0f }, 0.0f },
+
+				//light
+				{ { 0.0f, -0.35f, 1.9999f }, 0.0f,{ 0.5657f, -0.5657f, 0.0f }, 0.0f, { -0.5657f,  -0.5657f, 0.0f }, 0.0f },
+			};
+
+			makeRotatedBox({ -0.6f, -1.0f, 0.0f }, { 0.1f, -0.3f, 1.5f }, glm::radians(15.0f));
+			makeBox({ 0.4f, -1.2f, 0.0f }, { 1.0f, -0.5f, 0.8f });
+
+			materials =
+			{
+				{{0.12f, 0.45f, 0.15f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.65f, 0.05f, 0.05f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
+				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f},
+			};
+
+			missShaderColouring = 0;
+
+			break;
+
+
 		default:
 			break;
 		}
@@ -2742,6 +2782,82 @@ private:
 			obj.aabb = aabb;
 			aabbObjects.push_back(obj);
 		}
+	}
+
+	void makeBox(glm::vec3 p0, glm::vec3 p1)
+	{
+		// Front (z = p1.z)
+		quads.push_back({ {p0.x, p0.y, p1.z}, 0.0f,
+					  {p1.x - p0.x, 0.0f, 0.0f}, 0.0f,
+					  {0.0f, p1.y - p0.y, 0.0f}, 0.0f });
+
+		// Back (z = p0.z)
+		quads.push_back({ {p1.x, p0.y, p0.z}, 0.0f,
+					  {p0.x - p1.x, 0.0f, 0.0f}, 0.0f,
+					  {0.0f, p1.y - p0.y, 0.0f}, 0.0f });
+
+		// Left (x = p0.x)
+		quads.push_back({ {p0.x, p0.y, p0.z}, 0.0f,
+					  {0.0f, 0.0f, p1.z - p0.z}, 0.0f,
+					  {0.0f, p1.y - p0.y, 0.0f}, 0.0f });
+
+		// Right (x = p1.x)
+		quads.push_back({ {p1.x, p0.y, p1.z}, 0.0f,
+					  {0.0f, 0.0f, p0.z - p1.z}, 0.0f,
+					  {0.0f, p1.y - p0.y, 0.0f}, 0.0f });
+
+		// Bottom (y = p0.y)
+		quads.push_back({ {p0.x, p0.y, p0.z}, 0.0f,
+					  {p1.x - p0.x, 0.0f, 0.0f}, 0.0f,
+					  {0.0f, 0.0f, p1.z - p0.z}, 0.0f });
+
+		// Top (y = p1.y)
+		quads.push_back({ {p0.x, p1.y, p1.z}, 0.0f,
+					  {p1.x - p0.x, 0.0f, 0.0f}, 0.0f,
+					  {0.0f, 0.0f, p0.z - p1.z}, 0.0f });
+
+	}
+
+	void makeRotatedBox(const glm::vec3& pMin, const glm::vec3& pMax, float angle)
+	{
+		glm::vec3 corners[8] = {
+			{ pMin.x, pMin.y, pMin.z }, // bottom
+			{ pMax.x, pMin.y, pMin.z },
+			{ pMax.x, pMax.y, pMin.z },
+			{ pMin.x, pMax.y, pMin.z },
+
+			{ pMin.x, pMin.y, pMax.z }, // top
+			{ pMax.x, pMin.y, pMax.z },
+			{ pMax.x, pMax.y, pMax.z },
+			{ pMin.x, pMax.y, pMax.z },
+		};
+
+		// Pivot = box center
+		glm::vec3 center = (pMin + pMax) * 0.5f;
+
+		float c = cos(angle);
+		float s = sin(angle);
+
+		auto rotateZ = [&](const glm::vec3& p) -> glm::vec3 {
+			glm::vec3 q = p - center;
+			return {
+				c * q.x - s * q.y + center.x,
+				s * q.x + c * q.y + center.y,
+				q.z + center.z
+			};
+			};
+
+		for (int i = 0; i < 8; i++) {
+			corners[i] = rotateZ(corners[i]);
+		}
+
+		// Faces → quads
+		quads.push_back({ corners[0], 0.0f, corners[1] - corners[0], 0.0f, corners[3] - corners[0], 0.0f });
+		quads.push_back({ corners[4], 0.0f, corners[5] - corners[4], 0.0f, corners[7] - corners[4], 0.0f });
+		quads.push_back({ corners[0], 0.0f, corners[1] - corners[0], 0.0f, corners[4] - corners[0], 0.0f });
+		quads.push_back({ corners[2], 0.0f, corners[3] - corners[2], 0.0f, corners[6] - corners[2], 0.0f });
+		quads.push_back({ corners[0], 0.0f, corners[3] - corners[0], 0.0f, corners[4] - corners[0], 0.0f });
+		quads.push_back({ corners[1], 0.0f, corners[2] - corners[1], 0.0f, corners[5] - corners[1], 0.0f });
 	}
 
 	inline float random_float(float min = 0.0f, float max = 1.0f)
