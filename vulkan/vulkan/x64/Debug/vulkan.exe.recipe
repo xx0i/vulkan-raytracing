@@ -2,7 +2,7 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>C:\full sail\vulkan\vulkan\x64\Debug\vulkan.exe</FullPath>
+      <FullPath>C:\full sail\vulkan-raytracing\vulkan\x64\Debug\vulkan.exe</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

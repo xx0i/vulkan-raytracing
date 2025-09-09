@@ -2599,7 +2599,7 @@ private:
 
 			break;
 
-		case 9:
+		case 9: //two perlin noise (marbled) spheres with one quad light
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 1},  //perlin noise
@@ -2622,7 +2622,7 @@ private:
 
 			break;
 
-		case 10:
+		case 10: //two perlin noise (marbled) spheres with one quad light and one sphere light
 			spheres =
 			{
 				{{0.0f, 0.0f, -4.5f}, 0.5f, {1.0f, 0.0f, 1.0f, 1.0f}, 0, 0, 0, 1},  //perlin noise
@@ -2647,7 +2647,7 @@ private:
 
 			break;
 
-		case 11:
+		case 11: //empty cornell box
 			quads =
 			{
 				//left wall
@@ -2683,7 +2683,7 @@ private:
 
 			break;
 
-		case 12:
+		case 12: //classic cornell box
 			quads =
 			{
 				//left wall
