@@ -135,7 +135,21 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\libraries\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="..\..\libraries\imgui\backends\imgui_impl_vulkan.cpp" />
+    <ClCompile Include="..\..\libraries\imgui\imgui.cpp" />
+    <ClCompile Include="..\..\libraries\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\..\libraries\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\..\libraries\imgui\imgui_widgets.cpp" />
     <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\libraries\imgui\imconfig.h" />
+    <ClInclude Include="..\..\libraries\imgui\imgui.h" />
+    <ClInclude Include="..\..\libraries\imgui\imgui_internal.h" />
+    <ClInclude Include="..\..\libraries\imgui\imstb_rectpack.h" />
+    <ClInclude Include="..\..\libraries\imgui\imstb_textedit.h" />
+    <ClInclude Include="..\..\libraries\imgui\imstb_truetype.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

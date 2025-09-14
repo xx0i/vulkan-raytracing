@@ -1,1 +1,7 @@
+C:\full sail\vulkan-raytracing\libraries\imgui\backends\imgui_impl_glfw.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\imgui_impl_glfw.obj
+C:\full sail\vulkan-raytracing\libraries\imgui\backends\imgui_impl_vulkan.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\imgui_impl_vulkan.obj
+C:\full sail\vulkan-raytracing\libraries\imgui\imgui.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\imgui.obj
+C:\full sail\vulkan-raytracing\libraries\imgui\imgui_draw.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\imgui_draw.obj
+C:\full sail\vulkan-raytracing\libraries\imgui\imgui_tables.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\imgui_tables.obj
+C:\full sail\vulkan-raytracing\libraries\imgui\imgui_widgets.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\imgui_widgets.obj
 C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp;C:\full sail\vulkan-raytracing\vulkan\vulkan\x64\Debug\main.obj

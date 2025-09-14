@@ -33,13 +33,17 @@
 #include <unordered_map>
 #include <random>
 
+#include "../imgui/imgui.h"
+#include "../imgui/backends/imgui_impl_vulkan.h"
+#include "../imgui/backends/imgui_impl_glfw.h"
+
 const uint32_t width = 800;
 const uint32_t height = 600;
 
 const std::string modelPath = "models/viking_room.obj";
 const std::string texturePath = "textures/earthmap.jpg";
 
-const int maxFramesInFlight = 2;
+const int maxFramesInFlight = 3;
 
 const std::vector<const char*> validationLayers =
 {
@@ -520,6 +524,11 @@ private:
 
 	std::vector<AabbObjectGPU> gpuAabbs;
 
+	VkDescriptorPool imguiDescriptorPool;
+	VkRenderPass imguiRenderPass;
+	std::vector<VkFramebuffer> imguiFrameBuffers;
+
+
 	camera camera
 	{
 		glm::vec3(4.46082, 3.29564, 1.53025),     // position
@@ -603,6 +612,7 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
+		createImGuiRenderPass();
 		updateCameraVectors();
 		//createDescriptorSetLayout();
 		createRayTracingDescriptorSetLayout();
@@ -615,6 +625,7 @@ private:
 		createColourResources();
 		createDepthResources();
 		createFrameBuffers();
+		createImguiFrameBuffers();
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
@@ -650,6 +661,8 @@ private:
 		//createDescriptorPool();
 		createRayTracingDescriptorPool();
 		creatComputeDescriptorPool();
+		createImguiDescriptorPool();
+		imguiInitialization();
 		//createDescriptorSets();
 		createRayTracingDescriptorSets();
 		createAlphaDescriptorSets();
@@ -690,6 +703,11 @@ private:
 			vkDestroyFramebuffer(device, frameBuffer, nullptr);
 		}
 
+		for (auto frameBuffer : imguiFrameBuffers)
+		{
+			vkDestroyFramebuffer(device, frameBuffer, nullptr);
+		}
+
 		for (auto imageView : swapChainImageViews)
 		{
 			vkDestroyImageView(device, imageView, nullptr);
@@ -700,11 +718,19 @@ private:
 
 	void cleanup()
 	{
+		ImGui_ImplVulkan_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
+		ImGui::DestroyContext();
+		vkDestroyDescriptorPool(device, imguiDescriptorPool, nullptr);
+
 		cleanupSwapChain();
 
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
+
+		vkDestroyRenderPass(device, imguiRenderPass, nullptr);
+
 
 		vkDestroyPipeline(device, rayTracingPipeline, nullptr);
 		vkDestroyPipelineLayout(device, rayTracingPipelineLayout, nullptr);
@@ -845,6 +871,8 @@ private:
 		createColourResources();
 		createDepthResources();
 		createFrameBuffers();
+
+		ImGui_ImplVulkan_SetMinImageCount(static_cast<uint32_t>(swapChainImages.size()));
 	}
 
 	void createInstance()
@@ -1190,6 +1218,51 @@ private:
 		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to create render pass");
+		}
+	}
+
+	void createImGuiRenderPass() {
+		VkAttachmentDescription colorAttachment{};
+		colorAttachment.format = swapChainImageFormat;
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; // preserve the copied pixels
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+		// IMPORTANT: initialLayout must match the layout the image is in before vkCmdBeginRenderPass
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		VkAttachmentReference colorAttachmentRef{};
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // subpass uses this
+
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;
+
+		// Dependency should allow TRANSFER -> COLOR_ATTACHMENT implicit transition
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		dependency.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
+
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &imguiRenderPass) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create ImGui render pass!");
 		}
 	}
 
@@ -1754,6 +1827,30 @@ private:
 		}
 	}
 
+	void createImguiFrameBuffers()
+	{
+		imguiFrameBuffers.resize(swapChainImageViews.size());
+
+		for (size_t i = 0; i < swapChainImageViews.size(); i++)
+		{
+			VkImageView attachments[] = { swapChainImageViews[i] };
+
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = imguiRenderPass;  // must match the simple render pass you made
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = attachments;
+			framebufferInfo.width = swapChainExtent.width;
+			framebufferInfo.height = swapChainExtent.height;
+			framebufferInfo.layers = 1;
+
+			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &imguiFrameBuffers[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create ImGui framebuffer!");
+			}
+		}
+	}
+
 	void createShaderBindingTables()
 	{
 		VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingProperties{};
@@ -2313,6 +2410,41 @@ private:
 			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+		{
+			barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			barrier.dstAccessMask = 0;
+			sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			sourceStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL)
+		{
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT; // or RAY_TRACING_SHADER_BIT_KHR if it's only for RT
 		}
 		else
 		{
@@ -3698,6 +3830,66 @@ private:
 		}
 	}
 
+	void createImguiDescriptorPool()
+	{
+		VkDescriptorPoolSize poolSizes[] = {
+			{ VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+			{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+		};
+
+		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
+		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+		descriptorPoolInfo.poolSizeCount = (uint32_t)IM_ARRAYSIZE(poolSizes);
+		descriptorPoolInfo.pPoolSizes = poolSizes;
+		descriptorPoolInfo.maxSets = 1000 * IM_ARRAYSIZE(poolSizes);
+
+		if (vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &imguiDescriptorPool) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create descriptor pool");
+		}
+	}
+
+	void imguiInitialization()
+	{
+		IMGUI_CHECKVERSION();
+		ImGui::CreateContext();
+		ImGuiIO& io = ImGui::GetIO();
+		io.FontGlobalScale = 1.4f;
+		ImGui::StyleColorsDark();
+
+		// Platform backend
+		ImGui_ImplGlfw_InitForVulkan(window, true);
+
+		queueFamilyIndices queueFamily = findQueueFamilies(physicalDevice);
+
+		// Vulkan backend
+		ImGui_ImplVulkan_InitInfo initInfo = {};
+		initInfo.Instance = instance;
+		initInfo.PhysicalDevice = physicalDevice;
+		initInfo.Device = device;
+		initInfo.QueueFamily = queueFamily.graphicsFamily.value();
+		initInfo.Queue = graphicsQueue;
+		initInfo.PipelineCache = VK_NULL_HANDLE;
+		initInfo.DescriptorPool = imguiDescriptorPool;
+		initInfo.MinImageCount = static_cast<uint32_t>(swapChainImages.size());
+		initInfo.ImageCount = static_cast<uint32_t>(swapChainImages.size());
+		initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+		initInfo.Allocator = nullptr;
+		initInfo.RenderPass = imguiRenderPass;
+
+		ImGui_ImplVulkan_Init(&initInfo);
+	}
+
 	void createDescriptorSets()
 	{
 		std::vector<VkDescriptorSetLayout> layouts(maxFramesInFlight, descriptorSetLayout);
@@ -4215,66 +4407,99 @@ private:
 	{
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		beginInfo.flags = 0;
-		beginInfo.pInheritanceInfo = nullptr;
 
-		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
-		{
+		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
 			throw std::runtime_error("failed to begin recording command buffer");
 		}
 
-		transitionImageLayout(swapChainImages[imageIndex], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
-		transitionImageLayout(storeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
-		transitionImageLayout(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+		VkImageSubresourceRange range{};
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.levelCount = 1;
+		range.layerCount = 1;
+		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex],
+			VK_IMAGE_LAYOUT_UNDEFINED,   // <-- instead of PRESENT_SRC_KHR
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			range);
+
+		// storeImage and computeImage are offscreen images you control.
+		transitionImageLayoutInCommandBuffer(commandBuffer, storeImage,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_GENERAL,
+			range);
+
+		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_GENERAL,
+			range);
 
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rayTracingPipeline);
 
-		std::array<VkDescriptorSet, 2> descriptorSetsToBind = { rayTracingDescriptorSets[currentFrame], alphaDescriptorSets[currentFrame] };
+		std::array<VkDescriptorSet, 2> descriptorSetsToBind = {
+			rayTracingDescriptorSets[currentFrame],
+			alphaDescriptorSets[currentFrame]
+		};
 
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rayTracingPipelineLayout, 0, static_cast<uint32_t>(descriptorSetsToBind.size()), descriptorSetsToBind.data(),
-			0, nullptr);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+			rayTracingPipelineLayout, 0,
+			static_cast<uint32_t>(descriptorSetsToBind.size()),
+			descriptorSetsToBind.data(), 0, nullptr);
 
 		pushConstants pcData = { frameCounter, missShaderColouring };
-		vkCmdPushConstants(commandBuffer, rayTracingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR, 0, sizeof(pushConstants), &pcData);
+		vkCmdPushConstants(commandBuffer, rayTracingPipelineLayout,
+			VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR,
+			0, sizeof(pushConstants), &pcData);
 
-		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion, &hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
+		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion,
+			&hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
 
-		VkImageSubresourceRange range{};
-		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		range.baseMipLevel = 0;
-		range.levelCount = 1;
-		range.baseArrayLayer = 0;
-		range.layerCount = 1;
-
+		// compute dispatch
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, nullptr);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+			computePipelineLayout, 0, 1,
+			&computeDescriptorSets[currentFrame], 0, nullptr);
 		vkCmdDispatch(commandBuffer, swapChainExtent.width, swapChainExtent.height, 1);
 
-		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, range);
-		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, range);
+		// Copy into swapchain image
+		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage,
+			VK_IMAGE_LAYOUT_GENERAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, range);
 
 		VkImageCopy copyRegion{};
 		copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.srcSubresource.mipLevel = 0;
-		copyRegion.srcSubresource.baseArrayLayer = 0;
 		copyRegion.srcSubresource.layerCount = 1;
-		copyRegion.srcOffset = { 0, 0, 0 };
-
 		copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.dstSubresource.mipLevel = 0;
-		copyRegion.dstSubresource.baseArrayLayer = 0;
 		copyRegion.dstSubresource.layerCount = 1;
-		copyRegion.dstOffset = { 0, 0, 0 };
+		copyRegion.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
 
-		copyRegion.extent.width = swapChainExtent.width;
-		copyRegion.extent.height = swapChainExtent.height;
-		copyRegion.extent.depth = 1;
+		vkCmdCopyImage(commandBuffer, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &copyRegion);
 
-		vkCmdCopyImage(commandBuffer, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, range);
 
-		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
-		{
+		// --- New: ImGui pass ---
+		VkRenderPassBeginInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		renderPassInfo.renderPass = imguiRenderPass;
+		renderPassInfo.framebuffer = imguiFrameBuffers[imageIndex];
+		renderPassInfo.renderArea.offset = { 0, 0 };
+		renderPassInfo.renderArea.extent = swapChainExtent;
+
+		VkClearValue clearValue{};
+		clearValue.color = { {0.0f, 0.0f, 0.0f, 1.0f} }; // not really used by ImGui
+
+		renderPassInfo.clearValueCount = 1;
+		renderPassInfo.pClearValues = &clearValue;
+
+		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		// Tell ImGui to render
+		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+
+		vkCmdEndRenderPass(commandBuffer);
+
+		// Transition to present layout //ERRORS HERE
+
+		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer");
 		}
 	}
@@ -4374,6 +4599,19 @@ private:
 
 	void drawFrame()
 	{
+
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		// Build UI
+		ImGui::Begin("Settings");
+		ImGui::Text("Frame: %d", currentFrame);
+		ImGui::End();
+
+		// Finalize
+		ImGui::Render();
+
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
 		uint32_t imageIndex;
@@ -4444,6 +4682,18 @@ private:
 
 	void drawFrameRayTracing()
 	{
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		// Build UI
+		ImGui::Begin("Settings");
+		ImGui::Text("Frame: %d", currentFrame);
+		ImGui::End();
+
+		// Finalize
+		ImGui::Render();
+
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
 		uint32_t imageIndex;
