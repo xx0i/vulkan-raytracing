@@ -4687,8 +4687,10 @@ private:
 		ImGui::NewFrame();
 
 		// Build UI
-		ImGui::Begin("Settings");
+		ImGui::Begin("Info");
 		ImGui::Text("Frame: %d", currentFrame);
+		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+		ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
 		ImGui::End();
 
 		// Finalize
