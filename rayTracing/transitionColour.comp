@@ -23,7 +23,7 @@ void main()
 
     vec4 accumulated;
 
-    if (pc.frameIndex == 0) 
+    if (pc.frameIndex <= 1) 
     {
         accumulated = newColour;
     }

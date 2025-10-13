@@ -324,10 +324,10 @@ struct aabbObject
 
 struct AabbObjectGPU
 {
-    uint32_t type;
-    uint32_t geoIndex;
-    uint32_t matIndex;
-    uint32_t pad0;
+	uint32_t type;
+	uint32_t geoIndex;
+	uint32_t matIndex;
+	uint32_t pad0;
 };
 
 enum materialType : uint32_t
@@ -356,7 +356,7 @@ struct indexUniformBufferObject
 	uint32_t imageIndex;
 };
 
-struct pushConstants 
+struct pushConstants
 {
 	uint32_t frameIndex;
 	uint32_t missColour;
@@ -516,7 +516,7 @@ private:
 	VkBuffer geoTypeBuffer;
 	VkDeviceMemory geoTypeBufferMemory;
 	VkDeviceAddress geoTypeAddress;
-	
+
 	std::vector<aabbObject> aabbObjects;
 	VkBuffer aabbObjectsBuffer;
 	VkDeviceMemory aabbObjectsBufferMemory;
@@ -527,6 +527,8 @@ private:
 	VkDescriptorPool imguiDescriptorPool;
 	VkRenderPass imguiRenderPass;
 	std::vector<VkFramebuffer> imguiFrameBuffers;
+
+	VkExtent3D extent;
 
 
 	camera camera
@@ -660,7 +662,7 @@ private:
 		createShaderBindingTables();
 		//createDescriptorPool();
 		createRayTracingDescriptorPool();
-		creatComputeDescriptorPool();
+		createComputeDescriptorPool();
 		createImguiDescriptorPool();
 		imguiInitialization();
 		//createDescriptorSets();
@@ -690,6 +692,50 @@ private:
 
 	void cleanupSwapChain()
 	{
+		for (auto framebuffer : swapChainFrameBuffers)
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		swapChainFrameBuffers.clear();
+
+		for (auto framebuffer : imguiFrameBuffers)
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		imguiFrameBuffers.clear();
+
+		if (imguiRenderPass != VK_NULL_HANDLE)
+		{
+			vkDestroyRenderPass(device, imguiRenderPass, nullptr);
+			imguiRenderPass = VK_NULL_HANDLE;
+		}
+
+		if (rayTracingAndAlphaDescriptorPool != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorPool(device, rayTracingAndAlphaDescriptorPool, nullptr);
+			rayTracingAndAlphaDescriptorPool = VK_NULL_HANDLE;
+		}
+
+		if (computeDescriptorPool != VK_NULL_HANDLE)
+		{
+			vkDestroyDescriptorPool(device, computeDescriptorPool, nullptr);
+			computeDescriptorPool = VK_NULL_HANDLE;
+		}
+
+		vkDestroySampler(device, alphaSampler, nullptr);
+
+		vkDestroyImageView(device, storeImageView, nullptr);
+		vkDestroyImage(device, storeImage, nullptr);
+		vkFreeMemory(device, storeImageMemory, nullptr);
+
+		vkDestroyImageView(device, alphaImageView, nullptr);
+		vkDestroyImage(device, alphaImage, nullptr);
+		vkFreeMemory(device, alphaImageMemory, nullptr);
+
+		vkDestroyImageView(device, computeImageView, nullptr);
+		vkDestroyImage(device, computeImage, nullptr);
+		vkFreeMemory(device, computeImageMemory, nullptr);
+
+		vkDestroyImageView(device, accumulationImageView, nullptr);
+		vkDestroyImage(device, accumulationImage, nullptr);
+		vkFreeMemory(device, accumulationImageMemory, nullptr);
+
 		vkDestroyImageView(device, depthImageView, nullptr);
 		vkDestroyImage(device, depthImage, nullptr);
 		vkFreeMemory(device, depthImageMemory, nullptr);
@@ -698,22 +744,15 @@ private:
 		vkDestroyImage(device, colourImage, nullptr);
 		vkFreeMemory(device, colourImageMemory, nullptr);
 
-		for (auto frameBuffer : swapChainFrameBuffers)
-		{
-			vkDestroyFramebuffer(device, frameBuffer, nullptr);
-		}
-
-		for (auto frameBuffer : imguiFrameBuffers)
-		{
-			vkDestroyFramebuffer(device, frameBuffer, nullptr);
-		}
-
 		for (auto imageView : swapChainImageViews)
-		{
 			vkDestroyImageView(device, imageView, nullptr);
-		}
+		swapChainImageViews.clear();
 
-		vkDestroySwapchainKHR(device, swapChain, nullptr);
+		if (swapChain != VK_NULL_HANDLE)
+		{
+			vkDestroySwapchainKHR(device, swapChain, nullptr);
+			swapChain = VK_NULL_HANDLE;
+		}
 	}
 
 	void cleanup()
@@ -729,9 +768,6 @@ private:
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
 
-		vkDestroyRenderPass(device, imguiRenderPass, nullptr);
-
-
 		vkDestroyPipeline(device, rayTracingPipeline, nullptr);
 		vkDestroyPipelineLayout(device, rayTracingPipelineLayout, nullptr);
 
@@ -746,31 +782,10 @@ private:
 
 		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
-		vkDestroyDescriptorPool(device, rayTracingAndAlphaDescriptorPool, nullptr);
-
-		vkDestroyDescriptorPool(device, computeDescriptorPool, nullptr);
-
 		vkDestroySampler(device, textureSampler, nullptr);
 		vkDestroyImageView(device, textureImageView, nullptr);
 		vkDestroyImage(device, textureImage, nullptr);
 		vkFreeMemory(device, textureImageMemory, nullptr);
-
-		vkDestroyImageView(device, storeImageView, nullptr);
-		vkDestroyImage(device, storeImage, nullptr);
-		vkFreeMemory(device, storeImageMemory, nullptr);
-
-		vkDestroySampler(device, alphaSampler, nullptr);
-		vkDestroyImageView(device, alphaImageView, nullptr);
-		vkDestroyImage(device, alphaImage, nullptr);
-		vkFreeMemory(device, alphaImageMemory, nullptr);
-
-		vkDestroyImageView(device, computeImageView, nullptr);
-		vkDestroyImage(device, computeImage, nullptr);
-		vkFreeMemory(device, computeImageMemory, nullptr);
-
-		vkDestroyImageView(device, accumulationImageView, nullptr);
-		vkDestroyImage(device, accumulationImage, nullptr);
-		vkFreeMemory(device, accumulationImageMemory, nullptr);
 
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
@@ -870,7 +885,54 @@ private:
 		createImageViews();
 		createColourResources();
 		createDepthResources();
+
+		createStoreImage();
+		createStoreImageView();
+
+		createAlphaImage();
+		createAlphaImageView();
+		createAlphaSampler();
+
+		createComputeImage();
+		createComputeImageView();
+
+		createAccumulationImage();
+		createAccumulationImageView();
+
+		VkClearColorValue clearColor = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+
+		VkCommandBuffer cmd = beginSingleTimeCommands();
+
+		VkImageSubresourceRange range{};
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.baseMipLevel = 0;
+		range.levelCount = 1;
+		range.baseArrayLayer = 0;
+		range.layerCount = 1;
+
+		vkCmdClearColorImage(
+			cmd,
+			accumulationImage,
+			VK_IMAGE_LAYOUT_GENERAL, // or transition from UNDEFINED → GENERAL first
+			&clearColor,
+			1,
+			&range);
+
+		endSingleTimeCommands(cmd);
+
+		frameCounter = 0;
+
 		createFrameBuffers();
+
+		createRayTracingDescriptorPool();
+		createComputeDescriptorPool();
+
+		createRayTracingDescriptorSets();
+		createAlphaDescriptorSets();
+		createComputeDescriptorSets();
+
+		createImGuiRenderPass();
+		createImguiFrameBuffers();
 
 		ImGui_ImplVulkan_SetMinImageCount(static_cast<uint32_t>(swapChainImages.size()));
 	}
@@ -1644,7 +1706,7 @@ private:
 		VkPipelineShaderStageCreateInfo sphereClosesthitShaderStageInfo{};
 		sphereClosesthitShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		sphereClosesthitShaderStageInfo.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-		sphereClosesthitShaderStageInfo.module =sphereClosesthitShaderModule;
+		sphereClosesthitShaderStageInfo.module = sphereClosesthitShaderModule;
 		sphereClosesthitShaderStageInfo.pName = "main";
 
 		VkPipelineShaderStageCreateInfo anyhitShaderStageInfo{};
@@ -1671,7 +1733,7 @@ private:
 		sphereIntersectionShaderStageInfo.module = sphereIntersectionShaderModule;
 		sphereIntersectionShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo, 
+		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo,
 															quadClosesthitShaderStageInfo, sphereClosesthitShaderStageInfo,	anyhitShaderStageInfo,
 															intersectionShaderStageInfo, quadIntersectionShaderStageInfo, sphereIntersectionShaderStageInfo };
 
@@ -2551,7 +2613,7 @@ private:
 				{{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 1.50f, materialType::dielectric},     //left
 				{{0.8f, 0.6f, 0.2f, 1.0f}, 1.0f, 0.0f, materialType::metal}            //right
 			};
-			
+
 			missShaderColouring = 1;
 
 			break;
@@ -2707,7 +2769,7 @@ private:
 
 				//back wall
 				{ { -1.3535f, -0.8535f, 0.0f }, 0.0f, { 1.4142f, -1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
-				
+
 				//right wall
 				{ { 0.7677f, -1.75607f, 0.0f }, 0.0f, { 1.4142f, 1.4142f, 0.0f }, 0.0f, { 0.0f, 0.0f, 2.0f }, 0.0f },
 
@@ -2873,7 +2935,7 @@ private:
 
 			aabbs.push_back(aabb);
 			geoTypes.push_back(geometryType::sphereShape);
-			
+
 			aabbObject obj{};
 			obj.type = geometryType::sphereShape;
 			obj.geoIndex = i;
@@ -3275,11 +3337,11 @@ private:
 	{
 		//createBLASaabb();
 		//createTLAS();
-		
+
 		for (size_t i = 0; i < aabbObjects.size(); i++)
 		{
-			aabbObjects[i].blas = createBLASForAABB(aabbObjects[i].aabb, aabbObjects[i].blasDeviceAddress, 
-				                                    aabbObjects[i].blasBuffer, aabbObjects[i].blasMemory);
+			aabbObjects[i].blas = createBLASForAABB(aabbObjects[i].aabb, aabbObjects[i].blasDeviceAddress,
+				aabbObjects[i].blasBuffer, aabbObjects[i].blasMemory);
 		}
 
 		for (auto& obj : aabbObjects) {
@@ -3427,7 +3489,7 @@ private:
 		vkFreeMemory(device, scratchMemory, nullptr);
 		vkDestroyBuffer(device, scratchBuffer, nullptr);
 	}
-	
+
 	VkAccelerationStructureKHR createBLASForAABB(const VkAabbPositionsKHR& aabb, VkDeviceAddress& deviceAddr, VkBuffer& buffer, VkDeviceMemory& memory)
 	{
 		VkBuffer aabbUploadBuffer;
@@ -3435,7 +3497,7 @@ private:
 		VkDeviceSize aabbSize = sizeof(VkAabbPositionsKHR);
 
 		createBuffer(aabbSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 			VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, aabbUploadBuffer, aabbUploadMemory);
 
 		void* mapped;
@@ -3811,7 +3873,7 @@ private:
 		}
 	}
 
-	void creatComputeDescriptorPool()
+	void createComputeDescriptorPool()
 	{
 		VkDescriptorPoolSize  descriptorPoolSizes{};
 
@@ -4207,6 +4269,9 @@ private:
 			writeDescriptorSets[2].pImageInfo = &accumulationImageInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+			/*printf("createComputeDescriptorSets: computeImageView = 0x%llx, accumulationImageView = 0x%llx\n",
+				(unsigned long long)computeImageInfo.imageView,
+				(unsigned long long)accumulationImageInfo.imageView);*/
 		}
 	}
 
@@ -4416,12 +4481,8 @@ private:
 		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		range.levelCount = 1;
 		range.layerCount = 1;
-		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex],
-			VK_IMAGE_LAYOUT_UNDEFINED,   // <-- instead of PRESENT_SRC_KHR
-			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			range);
+		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, range);
 
-		// storeImage and computeImage are offscreen images you control.
 		transitionImageLayoutInCommandBuffer(commandBuffer, storeImage,
 			VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_IMAGE_LAYOUT_GENERAL,
@@ -4452,14 +4513,34 @@ private:
 		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion,
 			&hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
 
-		// compute dispatch
+		VkImageMemoryBarrier rtToComputeBarrier{};
+		rtToComputeBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		rtToComputeBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+		rtToComputeBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		rtToComputeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // RT wrote
+		rtToComputeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT; // compute will read/write
+		rtToComputeBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		rtToComputeBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+		rtToComputeBarrier.image = storeImage;
+		rtToComputeBarrier.subresourceRange = range;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &rtToComputeBarrier
+		);
+
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 			computePipelineLayout, 0, 1,
 			&computeDescriptorSets[currentFrame], 0, nullptr);
 		vkCmdDispatch(commandBuffer, swapChainExtent.width, swapChainExtent.height, 1);
 
-		// Copy into swapchain image
 		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage,
 			VK_IMAGE_LAYOUT_GENERAL,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, range);
@@ -4471,12 +4552,8 @@ private:
 		copyRegion.dstSubresource.layerCount = 1;
 		copyRegion.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
 
-		vkCmdCopyImage(commandBuffer, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			1, &copyRegion);
+		vkCmdCopyImage(commandBuffer, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
-
-		// --- New: ImGui pass ---
 		VkRenderPassBeginInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassInfo.renderPass = imguiRenderPass;
@@ -4485,19 +4562,16 @@ private:
 		renderPassInfo.renderArea.extent = swapChainExtent;
 
 		VkClearValue clearValue{};
-		clearValue.color = { {0.0f, 0.0f, 0.0f, 1.0f} }; // not really used by ImGui
+		clearValue.color = { {0.0f, 0.0f, 0.0f, 1.0f} };
 
 		renderPassInfo.clearValueCount = 1;
 		renderPassInfo.pClearValues = &clearValue;
 
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		// Tell ImGui to render
 		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
 
 		vkCmdEndRenderPass(commandBuffer);
-
-		// Transition to present layout //ERRORS HERE
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer");
@@ -4671,6 +4745,7 @@ private:
 		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || frameBufferResized)
 		{
 			recreateSwapChain();
+			frameBufferResized = false;
 		}
 		else if (result != VK_SUCCESS)
 		{
@@ -4780,6 +4855,7 @@ private:
 		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || frameBufferResized)
 		{
 			recreateSwapChain();
+			frameBufferResized = false;
 		}
 		else if (result != VK_SUCCESS)
 		{
