@@ -11939,7 +11939,8 @@ bool ImGui::IsPopupOpen(ImGuiID id, ImGuiPopupFlags popup_flags)
         }
         else
         {
-            // Return true if the popup is open at the current BeginPopup() level of the popup stack (this is the most-common query)
+            // Return true if the popup is open at the current BeginPopup() level of the popup stack (this is the most-common 
+            // )
             return g.OpenPopupStack.Size > g.BeginPopupStack.Size && g.OpenPopupStack[g.BeginPopupStack.Size].PopupId == id;
         }
     }

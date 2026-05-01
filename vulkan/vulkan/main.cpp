@@ -25,8 +25,8 @@
 #include <optional>
 #include <set>
 #include <cstdint>
-#include<limits>
-#include<algorithm>
+#include <limits>
+#include <algorithm>
 #include <fstream>
 #include <array>
 #include <chrono>
@@ -530,6 +530,8 @@ private:
 
 	VkExtent3D extent;
 
+	std::vector<VkQueryPool> timeStampQueryPools;
+	std::vector<uint64_t> timeStamps{};
 
 	camera camera
 	{
@@ -543,6 +545,7 @@ private:
 		glm::vec3(0.0f),						  // right
 	};
 
+	float timestampPeriod;
 	double lastMouseX = 0.0;
 	double lastMouseY = 0.0;
 	bool firstMouse = true;
@@ -611,6 +614,7 @@ private:
 		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
+		createTimestampQueryPools();
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
@@ -848,11 +852,18 @@ private:
 		for (size_t i = 0; i < maxFramesInFlight; i++)
 		{
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
-			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
 
+		for (auto& semaphore : renderFinishedSemaphores) {
+			vkDestroySemaphore(device, semaphore, nullptr);
+		}
+
 		vkDestroyCommandPool(device, commandPool, nullptr);
+
+		for (auto pool : timeStampQueryPools) {
+			vkDestroyQueryPool(device, pool, nullptr);
+		}
 
 		vkDestroyDevice(device, nullptr);
 
@@ -1091,6 +1102,7 @@ private:
 		vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 		vulkan12Features.bufferDeviceAddress = VK_TRUE;
 		vulkan12Features.descriptorIndexing = VK_TRUE;
+		vulkan12Features.hostQueryReset = VK_TRUE;
 		vulkan12Features.pNext = &accelerationStructureFeatures;
 
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync2Features{};
@@ -1136,6 +1148,30 @@ private:
 
 		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+	}
+
+	void createTimestampQueryPools()
+	{
+		timeStamps.resize(6);
+		timeStampQueryPools.resize(maxFramesInFlight);
+
+		VkPhysicalDeviceProperties deviceProperties;
+		vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+		timestampPeriod = deviceProperties.limits.timestampPeriod;
+
+		VkQueryPoolCreateInfo queryPoolInfo{};
+		queryPoolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+		queryPoolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+		queryPoolInfo.queryCount = timeStamps.size();
+
+		for (size_t i = 0; i < maxFramesInFlight; i++)
+		{
+			if (vkCreateQueryPool(device, &queryPoolInfo, nullptr, &timeStampQueryPools[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create query pool!");
+			}
+			vkResetQueryPool(device, timeStampQueryPools[i], 0, timeStamps.size());
+		}
 	}
 
 	void createSwapChain()
@@ -4470,6 +4506,7 @@ private:
 
 	void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
 	{
+
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
@@ -4510,9 +4547,13 @@ private:
 			VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR,
 			0, sizeof(pushConstants), &pcData);
 
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 0);
+
 		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion,
 			&hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
 
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 1);
+		
 		VkImageMemoryBarrier rtToComputeBarrier{};
 		rtToComputeBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		rtToComputeBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -4539,7 +4580,11 @@ private:
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 			computePipelineLayout, 0, 1,
 			&computeDescriptorSets[currentFrame], 0, nullptr);
+
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 2);
 		vkCmdDispatch(commandBuffer, swapChainExtent.width, swapChainExtent.height, 1);
+
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 3);
 
 		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage,
 			VK_IMAGE_LAYOUT_GENERAL,
@@ -4567,11 +4612,15 @@ private:
 		renderPassInfo.clearValueCount = 1;
 		renderPassInfo.pClearValues = &clearValue;
 
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 4);
+
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
 
 		vkCmdEndRenderPass(commandBuffer);
+
+		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 5);
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer");
@@ -4581,7 +4630,7 @@ private:
 	void createSyncObjects()
 	{
 		imageAvailableSemaphores.resize(maxFramesInFlight);
-		renderFinishedSemaphores.resize(maxFramesInFlight);
+		renderFinishedSemaphores.resize(swapChainImages.size());
 		inFlightFences.resize(maxFramesInFlight);
 
 		VkSemaphoreCreateInfo semaphoreInfo{};
@@ -4597,10 +4646,17 @@ private:
 		for (size_t i = 0; i < maxFramesInFlight; i++)
 		{
 			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-				vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
 				vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
 			{
 				throw std::runtime_error("failed to create synchronization objects for a frame");
+			}
+		}
+
+		for (size_t i = 0; i < renderFinishedSemaphores.size(); i++)
+		{
+			if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create image sync objects");
 			}
 		}
 	}
@@ -4757,21 +4813,70 @@ private:
 
 	void drawFrameRayTracing()
 	{
+		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+		if (frameCounter > maxFramesInFlight)
+		{
+			vkGetQueryPoolResults(
+				device,
+				timeStampQueryPools[currentFrame],
+				0,
+				timeStamps.size(),
+				timeStamps.size() * sizeof(uint64_t),
+				timeStamps.data(),
+				sizeof(uint64_t),
+				VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+		}
+		
+		vkResetQueryPool(device, timeStampQueryPools[currentFrame], 0, timeStamps.size());
+
+		//calculate times (with a tiny safety epsilon)
+		auto calculateTime = [&](size_t startIdx, size_t endIdx) {
+			if (timeStamps[endIdx] > timeStamps[startIdx]) {
+				return (timeStamps[endIdx] - timeStamps[startIdx]) * timestampPeriod / 1000000.0;
+			}
+			return 0.0;
+			};
+
+		double rtTime = calculateTime(0, 1);
+		double computeTime = calculateTime(2, 3);
+		double imguiTime = calculateTime(4, 5);
+
 		ImGui_ImplVulkan_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
 		// Build UI
-		ImGui::Begin("Info");
+		ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration |
+			ImGuiWindowFlags_AlwaysAutoResize |
+			ImGuiWindowFlags_NoSavedSettings |
+			ImGuiWindowFlags_NoFocusOnAppearing |
+			ImGuiWindowFlags_NoNav |
+			ImGuiWindowFlags_NoMove; // Optional: prevents user moving it
+
+		// --- INFO WINDOW (Top Left) ---
+		ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+		ImGui::SetNextWindowBgAlpha(0.3f);
+		ImGui::Begin("Info", nullptr, window_flags);
 		ImGui::Text("Frame: %d", currentFrame);
 		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
 		ImGui::Text("Frame Time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
 		ImGui::End();
 
+		// --- PERFORMANCE WINDOW (Bottom Left) ---
+		float screenHeight = ImGui::GetIO().DisplaySize.y;
+		// Pivot (0, 1) means the coordinate (10, height-10) refers to the bottom-left of the window
+		ImGui::SetNextWindowPos(ImVec2(10, screenHeight - 10), ImGuiCond_Always, ImVec2(0, 1));
+		ImGui::SetNextWindowBgAlpha(0.3f);
+		ImGui::Begin("Performance", nullptr, window_flags);
+		ImGui::Text("Ray Tracing: %.3f ms", rtTime);
+		ImGui::Text("Compute: %.3f ms", computeTime);
+		ImGui::Text("ImGui Render: %.3f ms", imguiTime);
+		ImGui::Separator();
+		ImGui::Text("Total GPU:   %.3f ms", rtTime + computeTime + imguiTime);
+		ImGui::End();
+
 		// Finalize
 		ImGui::Render();
-
-		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
 		uint32_t imageIndex;
 		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
@@ -4827,7 +4932,7 @@ private:
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
-		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
+		VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[imageIndex] };
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -4973,6 +5078,26 @@ private:
 		supportedFeatures.pNext = nullptr;
 
 		vkGetPhysicalDeviceFeatures2(device, &supportedFeatures);
+
+		VkPhysicalDeviceProperties deviceProperties;
+		vkGetPhysicalDeviceProperties(device, &deviceProperties);
+		if (deviceProperties.limits.timestampPeriod == 0)
+		{
+			return false;
+		}
+
+		if (!deviceProperties.limits.timestampComputeAndGraphics)
+		{
+			uint32_t queueFamilyCount = 0;
+			vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+			std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+			vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+			// Check if the graphics queue family we are actually using supports it
+			if (queueFamilies[indices.graphicsFamily.value()].timestampValidBits == 0) {
+				return false;
+			}
+		}
 
 		return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.features.samplerAnisotropy;
 	}
