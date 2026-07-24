@@ -3,10 +3,14 @@
 
 struct rayPayload 
 {
-    vec3 colour;
+    vec3 hitColor;
+    vec3 rayOrigin;
     vec3 rayDir;
-    int depth;
+    bool hit;
+    bool isEmissive;
 };
+
+layout(location = 0) rayPayloadInEXT rayPayload payload;
 
 layout(push_constant) uniform PushConstants 
 {
@@ -14,20 +18,27 @@ layout(push_constant) uniform PushConstants
     uint missColour;
 } pc;
 
-
-layout(location = 0) rayPayloadInEXT rayPayload payload;
-
 void main()
 {
-	if(pc.missColour == 1)
-	{
-	    float t = 0.5 * (payload.rayDir.z + 1.0);
-	    vec3 white = vec3(1.0);
-	    vec3 blue = vec3(0.5, 0.7, 1.0); 
-	    payload.colour = mix(white, blue, t);
-	}
-	if(pc.missColour == 0)
-	{
-	    payload.colour = vec3(0.0);
-	}
+    payload.hit = false;
+    
+    // CRITICAL: Set to true so rayGen knows this ray reached a light source (the sky)
+    // and terminates the path while accumulating hitColor.
+    payload.isEmissive = true; 
+
+    if (pc.missColour == 1)
+    {
+        // Gradient sky (white at horizon, blue looking up)
+        // Adjust to .z if your world coordinate system is Z-Up!
+        float t = 0.5 * (normalize(gl_WorldRayDirectionEXT).y + 1.0); 
+        vec3 white = vec3(1.0);
+        vec3 blue  = vec3(0.5, 0.7, 1.0); 
+        
+        payload.hitColor = mix(white, blue, t);
+    }
+    else
+    {
+        // Pure black sky
+        payload.hitColor = vec3(0.0);
+    }
 }

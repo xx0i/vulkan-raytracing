@@ -1,6 +1,5 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
-#extension GL_EXT_debug_printf : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 struct quad
@@ -21,8 +20,8 @@ struct aabbObject
     uint _pad0;
 };
 
-layout(set = 0, binding = 8) buffer quadBuffer {quad q[];}quads;
-layout(std430, set = 0, binding = 10) buffer aabbObjectsBuffer {aabbObject aabbObj[];}aabbObjs;
+layout(std430, set = 0, binding = 8) buffer quadBuffer { quad q[]; } quads;
+layout(std430, set = 0, binding = 10) buffer aabbObjectsBuffer { aabbObject aabbObj[]; } aabbObjs;
 
 struct attributes
 {
@@ -31,48 +30,43 @@ struct attributes
 
 hitAttributeEXT attributes attribs;
 
-
 void main()
 {
-    aabbObject obj = aabbObjs.aabbObj[gl_InstanceCustomIndexEXT];
+    aabbObject obj = aabbObjs.aabbObj[gl_InstanceCustomIndexEXT];;
     quad q = quads.q[obj.geoIndex];
 
     vec3 rayOrigin = gl_WorldRayOriginEXT;
-    vec3 rayDir = gl_WorldRayDirectionEXT;
+    vec3 rayDir    = gl_WorldRayDirectionEXT;
 
-    vec3 normal = cross(q.edgeU, q.edgeV);
-   
-    float normLen = length(normal);
+    vec3 n = cross(q.edgeU, q.edgeV);
+    float areaSq = dot(n, n);
 
-    if (normLen < 1e-6)
-    {
-        return;
-    }
-    normal = normal / normLen;
+    if (areaSq < 1e-8) return;
 
+    vec3 normal = n / sqrt(areaSq);
     float denom = dot(rayDir, normal);
 
-    if (abs(denom) < 1e-6)
-    {
-        return;
-    }
+    // Reject parallel rays
+    if (abs(denom) < 1e-6) return;
 
     float t = dot(q.origin - rayOrigin, normal) / denom;
 
-    if (t < 0.001)
-    {
-        return;
-    }
+    if (t < gl_RayTminEXT || t > gl_RayTmaxEXT) return;
 
-    vec3 p = rayOrigin + t * rayDir;
+    vec3 p     = rayOrigin + t * rayDir;
     vec3 local = p - q.origin;
 
-    float u = dot(local, q.edgeU) / dot(q.edgeU, q.edgeU);
-    float v = dot(local, q.edgeV) / dot(q.edgeV, q.edgeV);
+    // ✅ FIX 2: Planar UV projection (handles non-orthogonal edge vectors gracefully)
+    vec3 w  = n / areaSq;
+    float u = dot(w, cross(local, q.edgeV));
+    float v = dot(w, cross(q.edgeU, local));
 
-    if (u >= -1e-5 && u <= 1.0 + 1e-5 && v >= -1e-5 && v <= 1.0 + 1e-5)
+    // NaN Guard
+    if (isnan(u) || isnan(v)) return;
+
+    if (u >= -1e-4 && u <= 1.0 + 1e-4 && v >= -1e-4 && v <= 1.0 + 1e-4)
     {
-        attribs.uv = vec2(u, v);
+        attribs.uv = vec2(clamp(u, 0.0, 1.0), clamp(v, 0.0, 1.0));
         reportIntersectionEXT(t, 0);
     }
 }

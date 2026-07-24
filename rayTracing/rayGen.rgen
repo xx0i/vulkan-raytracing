@@ -12,34 +12,88 @@ layout(set = 0, binding = 2) uniform UniformData
 
 struct rayPayload 
 {
-    vec3 colour;
+    vec3 hitColor;
+    vec3 rayOrigin;
     vec3 rayDir;
-    int depth;
+    bool hit;
+    bool isEmissive;
 };
 
 layout(location = 0) rayPayloadEXT rayPayload payload;
 
 void main()
 {
-	const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-	const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
-	vec2 ndc = vec2(inUV.x, 1.0 - inUV.y) * 2.0 - 1.0;
+    const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+    const vec2 inUV = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+    vec2 ndc = vec2(inUV.x, 1.0 - inUV.y) * 2.0 - 1.0;
 
-	mat4 invView = inverse(ubo.view);
-	mat4 invProj = inverse(ubo.proj);
- 	vec4 rayOrigin = invView * vec4(0.0, 0.0, 0.0, 1.0);
+    mat4 invView = inverse(ubo.view);
+    mat4 invProj = inverse(ubo.proj);
+    vec4 origin  = invView * vec4(0.0, 0.0, 0.0, 1.0);
 
-	vec4 clip = vec4(ndc.x, ndc.y, 0.0, 1.0);
-	vec4 target = invProj * clip;
-	target /= target.w;
+    vec4 clip    = vec4(ndc.x, ndc.y, 0.0, 1.0);
+    vec4 target  = invProj * clip;
+    target /= target.w;
 
-	vec4 worldDir = invView * vec4(target.xyz, 0.0);
-	vec3 rayDirection = normalize(worldDir.xyz);
+    vec4 worldDir = invView * vec4(target.xyz, 0.0);
+    
+    vec3 rayOrigin    = origin.xyz;
+    vec3 rayDirection = normalize(worldDir.xyz);
 
-	payload.colour = vec3(1.0, 0.0, 1.0);
-	payload.rayDir = rayDirection;
-        payload.depth = 0;
-	
-	traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0, rayOrigin.xyz, 0.001, rayDirection, 10000.0, 0);
-	imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(payload.colour, 1.0));
+    // Prevent exact zero components from causing div-by-zero in ray-plane math
+    if (abs(rayDirection.x) < 1e-7) rayDirection.x = 1e-7;
+    if (abs(rayDirection.y) < 1e-7) rayDirection.y = 1e-7;
+    if (abs(rayDirection.z) < 1e-7) rayDirection.z = 1e-7;
+
+    vec3 accumulatedColor = vec3(0.0);
+    vec3 throughput       = vec3(1.0);
+    const int MAX_BOUNCES  = 5;
+
+    for (int bounce = 0; bounce < MAX_BOUNCES; ++bounce)
+    {
+        payload.hit        = false;
+        payload.isEmissive = false;
+        payload.hitColor   = vec3(0.0);
+
+        traceRayEXT(
+            topLevelAS, 
+            gl_RayFlagsNoneEXT, 
+            0xFF, 
+            0, // sbtRecordOffset
+            0, // sbtRecordStride (set to 1 if you have multiple hit groups in your SBT)
+            0, // missIndex
+            rayOrigin, 
+            0.001, 
+            rayDirection, 
+            10000.0, 
+            0
+        );
+
+        if (!payload.hit)
+        {
+            accumulatedColor += throughput * payload.hitColor;
+            break;
+        }
+
+        if (payload.isEmissive)
+        {
+            accumulatedColor += throughput * payload.hitColor;
+            break; 
+        }
+
+        throughput *= payload.hitColor;
+
+        if (max(throughput.r, max(throughput.g, throughput.b)) < 0.001)
+        {
+            break;
+        }
+
+        rayOrigin    = payload.rayOrigin;
+        rayDirection = payload.rayDir;
+    }
+
+    float exposure = 1.5;
+    accumulatedColor *= exposure;
+
+    imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(accumulatedColor, 1.0));
 }

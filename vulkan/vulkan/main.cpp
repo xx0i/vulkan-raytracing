@@ -300,14 +300,15 @@ struct sphere
 	uint32_t perlinNoise;
 };
 
+// Size: 48 bytes total
 struct quad
 {
-	glm::vec3 origin;
-	float pad0;
-	glm::vec3 edgeU;
-	float pad1;
-	glm::vec3 edgeV;
-	float pad2;
+	glm::vec3 origin; // 12 bytes
+	float pad0;       // 4 bytes  (Offset 16)
+	glm::vec3 edgeU;  // 12 bytes
+	float pad1;       // 4 bytes  (Offset 32)
+	glm::vec3 edgeV;  // 12 bytes
+	float pad2;       // 4 bytes  (Offset 48)
 };
 
 struct aabbObject
@@ -349,7 +350,6 @@ struct alignas(16) material
 	glm::vec4 emission;
 	float padding2;
 };
-
 
 struct indexUniformBufferObject
 {
@@ -1841,7 +1841,7 @@ private:
 		pipelineInfo.pStages = shaderStages;
 		pipelineInfo.groupCount = static_cast<uint32_t>(std::size(shaderGroups));
 		pipelineInfo.pGroups = shaderGroups;
-		pipelineInfo.maxPipelineRayRecursionDepth = 5;
+		pipelineInfo.maxPipelineRayRecursionDepth = 1;
 		pipelineInfo.layout = rayTracingPipelineLayout;
 
 		CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &rayTracingPipeline);
@@ -2947,6 +2947,16 @@ private:
 				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
 				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f},
 			};
+
+			// --- insert this immediately after the materials = { ... }; block in case 12 ---
+			{
+				// Ensure there is a material for every quad (quads indices map to materials at index spheres.size() + quadIndex)
+				size_t requiredMaterials = spheres.size() + quads.size();
+				while (materials.size() < requiredMaterials)
+				{
+					materials.push_back({ { 0.73f, 0.73f, 0.73f, 1.0f }, 0.0f, 0.0f, materialType::lambertian });
+				}
+			}
 
 			missShaderColouring = 0;
 

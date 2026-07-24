@@ -2,11 +2,10 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_nonuniform_qualifier : enable
 #extension GL_GOOGLE_include_directive : require
-#extension GL_EXT_debug_printf : enable
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 #include "random.glsl"
 #include "perlinNoise.glsl"
+#include "pbr.glsl"
 
 struct sphere 
 {
@@ -19,10 +18,10 @@ struct sphere
     uint perlinNoise;
 };
 
-const uint lambertian = 0;
-const uint metal = 1;
-const uint dielectric = 2;
-const uint isotropic = 3;
+const uint lambertian   = 0;
+const uint metal        = 1;
+const uint dielectric   = 2;
+const uint isotropic    = 3;
 const uint diffuseLight = 4;
 
 struct material
@@ -45,21 +44,21 @@ struct aabbObject
 };
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = 1, rgba8) readonly uniform image2D outputImage;
 layout(set = 0, binding = 3) uniform sampler2D textureSampler;
-layout(set = 0, binding = 6) buffer sphereBuffer {sphere s[];}spheres;
-layout(set = 0, binding = 7) buffer materialBuffer {material m[];}materials;
-layout(std430, set = 0, binding = 10) buffer aabbObjectsBuffer {aabbObject aabbObj[];}aabbObjs;
+layout(set = 0, binding = 6) buffer sphereBuffer { sphere s[]; } spheres;
+layout(set = 0, binding = 7) buffer materialBuffer { material m[]; } materials;
+layout(std430, set = 0, binding = 10) buffer aabbObjectsBuffer { aabbObject aabbObj[]; } aabbObjs;
 
 struct rayPayload 
 {
-    vec3 colour;
+    vec3 hitColor;
+    vec3 rayOrigin;
     vec3 rayDir;
-    int depth;
+    bool hit;
+    bool isEmissive;
 };
 
 layout(location = 0) rayPayloadInEXT rayPayload payload;
-layout(location = 1) rayPayloadEXT rayPayload newPayload;
 
 struct attributes
 {
@@ -74,239 +73,171 @@ layout(push_constant) uniform PushConstants
     uint missColour;
 } pc;
 
-vec3 toSRGB(vec3 linearColor)
-{
-    return pow(linearColor, vec3(1.0 / 2.2));
-}
-
-vec3 cosineSampleHemisphere(float u1, float u2)
-{
-    float r = sqrt(u1);
-    float theta = 2.0 * 3.1415926 * u2;
-
-    float x = r * cos(theta);
-    float y = r * sin(theta);
-    float z = sqrt(1.0 - u1); // Bias toward normal direction
-
-    return vec3(x, y, z); // This is in tangent space
-}
-
-mat3 buildOrthonormalBasis(vec3 n)
-{
-    vec3 t = abs(n.z) < 0.999 ? normalize(cross(n, vec3(0.0, 0.0, 1.0))) : normalize(cross(n, vec3(1.0, 0.0, 0.0)));
-    vec3 b = cross(n, t);
-    return mat3(t, b, n); // Matrix transforms from tangent to world space
-}
-
 float schlick(float cosine, float refractIndex)
 {
     float r0 = (1.0 - refractIndex) / (1.0 + refractIndex);
     r0 = r0 * r0;
+
     return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
 }
 
 void main()
 {
+    payload.hit = true;
+
     aabbObject obj = aabbObjs.aabbObj[gl_InstanceCustomIndexEXT];
-    material mat = materials.m[obj.matIndex];    
+    material mat   = materials.m[obj.matIndex];
+    sphere sph     = spheres.s[obj.geoIndex];
 
     vec3 hitPos = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
-    vec3 normal;
+    vec3 normal = normalize(hitPos - sph.center);
 
-	sphere sph = spheres.s[obj.geoIndex];
-	normal = normalize(hitPos - sph.center);
-
-	if (sph.normalColouring == 1)
-	{	
-	    vec3 normalColour = 0.5 * (normal + vec3(1.0));
-	    payload.colour = normalColour;
-	    return;
-    	}
-
-	if (sph.textured == 1)
-	{
-            vec2 uv = attribs.uv;
-	    vec3 texColour = texture(textureSampler, uv).rgb;
-            mat.albedo.rgb = texColour;
-	}
-    
-	if(sph.checkered == 1)
-	{
-            float scale = 5.0; //adjust as needed for checker size
-            float sines = sin(scale * hitPos.x) * sin(scale * hitPos.y) * sin(scale * hitPos.z);
-
-            vec3 colourA = vec3(0.0, 0.0, 0.0); // Dark squares
-            vec3 colourB = vec3(1.0, 1.0, 1.0); // Light squares
-
-            if (sines < 0.0)
-	    {
-		payload.colour = colourA;
-            }
-	    else
-	    {
-           	payload.colour = colourB;
-	    }
-	     return;
-	} 
-    
-	if(sph.perlinNoise == 1)
-	{
-	float scale = 5.0;
-	    float frequency = 3.0;
-	    float turbulenceAmplitude = 5.0;
-
-	    float marble = marbleTexture(scale * hitPos, frequency, turbulenceAmplitude);
-
-	    marble = marble * 0.5 + 0.5;
-
-	    vec3 colorA = vec3(1.0, 1.0, 1.0);
-	    vec3 colorB = vec3(0.0, 0.0, 0.0);
-
-	    vec3 finalColor = mix(colorA, colorB, marble);
-
-	    mat.albedo.rgb = finalColor;
-	}
-    if(mat.matType == lambertian)
+    // 1. Emissive Material
+    if (mat.matType == diffuseLight)
     {
-	const int MAX_DEPTH = 5;
-	if (payload.depth >= MAX_DEPTH)
-	{
-    	    payload.colour = vec3(0.0);
-    	    return;
-	}
-	
-	uint seed = randomSeed(gl_LaunchIDEXT.x + pc.frameIndex * 73856093, gl_LaunchIDEXT.y + pc.frameIndex * 19349663);
-	//vec3 scatterDirection = normalize(normal + randomInUnitSphere(seed));
-	float u1 = randomFloat(seed);
-	float u2 = randomFloat(seed);
-	vec3 dir1 = cosineSampleHemisphere(u1, u2);
-	vec3 dir2 = randomInUnitSphere(seed);
-	vec3 scatterDirection = normalize(mix(dir1, dir2, 0.5));
-	
-	if(length(scatterDirection) < 1e-3)
-	{
-	    scatterDirection = normal;
-	}
+        float strength = mat.emission.a > 0.0 ? mat.emission.a : 15.0;
 
-	newPayload.rayDir = scatterDirection;
-	newPayload.depth = payload.depth + 1;
-	newPayload.colour = vec3(0.0);
-
-	traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0, hitPos + 0.001 * normal, 0.001, scatterDirection, 10000.0, 1);
-
-	vec3 attenuation = mat.albedo.rgb;
-
-// If the material is fully black, don’t kill the path
-if (length(attenuation) < 0.001) {
-    payload.colour = newPayload.colour;  // pass light through
-} else {
-    payload.colour = attenuation * newPayload.colour;
-}
-        return;
-    }
-    else if(mat.matType == metal)
-    {
-	const int MAX_DEPTH = 5;
-	if (payload.depth >= MAX_DEPTH)
-	{
-    	    payload.colour = vec3(0.0);
-    	    return;
-	}
-
-	vec3 reflected = reflect(normalize(payload.rayDir), normal);
-	uint seed = randomSeed(gl_LaunchIDEXT.x + pc.frameIndex * 73856093, gl_LaunchIDEXT.y + pc.frameIndex * 19349663);
-	vec3 fuzzOffset = mat.fuzz * randomInUnitSphere(seed);
-	vec3 scatterDirection = normalize(reflected + fuzzOffset);
-	
-	if(dot(scatterDirection, normal) > 0.0)
-	{
-	    newPayload.rayDir = scatterDirection;
-	    newPayload.depth = payload.depth + 1;
-	    newPayload.colour = vec3(0.0);
-	    
-	    traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0, hitPos + 0.001 * normal, 0.001, scatterDirection, 10000.0, 1);
-	    
-	    payload.colour = mat.albedo.rgb * newPayload.colour;
-
-	}
-	else
-	{
-	    payload.colour = vec3(0.0);
-	}
-	return;
-    }
-  else if (mat.matType == dielectric)
-  {
-    const int MAX_DEPTH = 5;
-    if (payload.depth >= MAX_DEPTH)
-    {
-        payload.colour = vec3(0.0);
+        payload.hitColor   = mat.albedo.rgb * strength;
+        payload.isEmissive = true;
         return;
     }
 
-    vec3 unitDir = normalize(payload.rayDir);
-    float refIdx = mat.refractionIndex;
-    vec3 outwardNormal;
-    float niOverNt;
-    float cosine;
-
-    if (dot(unitDir, normal) < 0.0) {
-        // Ray is outside the surface
-        outwardNormal = normal;
-        niOverNt = 1.0 / refIdx;
-        cosine = -dot(unitDir, normal);
-    } else {
-        // Ray is inside the surface
-        outwardNormal = -normal;
-        niOverNt = refIdx;
-        cosine = dot(unitDir, normal);
+    // 2. Procedural Sphere Overrides
+    if (sph.normalColouring == 1)
+    {
+        payload.hitColor   = 0.5 * (normal + vec3(1.0));
+        payload.isEmissive = true;
+        return;
     }
 
-    vec3 refracted = refract(unitDir, outwardNormal, niOverNt);
+    if (sph.textured == 1)
+    {
+        mat.albedo.rgb = texture(textureSampler, attribs.uv).rgb;
+    }
 
-    // Use Schlick approximation for reflect probability
-    float reflectProb = (length(refracted) > 0.0) ? schlick(cosine, refIdx) : 1.0;
+    if (sph.checkered == 1)
+    {
+        float scale = 5.0;
+        float sines = sin(scale * hitPos.x) *
+                      sin(scale * hitPos.y) *
+                      sin(scale * hitPos.z);
 
-    uint seed = randomSeed(gl_LaunchIDEXT.x + pc.frameIndex * 73856093, gl_LaunchIDEXT.y + pc.frameIndex * 19349663);
-    float randVal = randomFloat(seed);
+        payload.hitColor   = (sines < 0.0) ? vec3(0.0) : vec3(1.0);
+        payload.isEmissive = true;
+        return;
+    }
 
-    vec3 scatterDir;
-    if (randVal < reflectProb)
-        scatterDir = reflect(unitDir, normal);
-    else
-        scatterDir = refracted;
+    if (sph.perlinNoise == 1)
+    {
+        float marble = marbleTexture(5.0 * hitPos, 3.0, 5.0);
+        marble = marble * 0.5 + 0.5;
 
-    newPayload.rayDir = scatterDir;
-    newPayload.depth = payload.depth + 1;
-    newPayload.colour = vec3(0.0);
+        mat.albedo.rgb = mix(vec3(1.0), vec3(0.0), marble);
+    }
 
-    traceRayEXT(
-        topLevelAS, 
-        gl_RayFlagsOpaqueEXT, 0xFF, 0, 0, 0,
-        hitPos + 0.001 * scatterDir, 0.001, scatterDir, 10000.0,
-        1
+    // Face normal towards ray
+    normal = (dot(normal, gl_WorldRayDirectionEXT) > 0.0) ? -normal : normal;
+
+
+    uint seed = randomSeed(
+        gl_LaunchIDEXT.x + pc.frameIndex * 73856093,
+        gl_LaunchIDEXT.y + pc.frameIndex * 19349663
     );
 
-    // For dielectrics, use the traced color without tinting
-    payload.colour = newPayload.colour;
-    return;
-   }
-   if (mat.matType == diffuseLight)
-   {
-    	if (dot(normal, -payload.rayDir) > 0.0)
-	{
-       	     payload.colour = mat.albedo.rgb * mat.emission.a; 
-	}    
-	else
-        {
-	    payload.colour = vec3(0.0);
+    vec3 V = normalize(-gl_WorldRayDirectionEXT);
 
-	}
+
+    // 3. Dielectric Materials
+    if (mat.matType == dielectric)
+    {
+        vec3 unitDir = normalize(gl_WorldRayDirectionEXT);
+
+        float refractionRatio =
+            (dot(unitDir, normal) < 0.0) ?
+            (1.0 / mat.refractionIndex) :
+            mat.refractionIndex;
+
+
+        float cosTheta = min(dot(-unitDir, normal), 1.0);
+
+        float sinTheta =
+            sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+
+
+        bool cannotRefract =
+            refractionRatio * sinTheta > 1.0;
+
+
+        float reflectProb =
+            schlick(cosTheta, mat.refractionIndex);
+
+
+        vec3 scatterDir;
+
+        if (cannotRefract || randomFloat(seed) < reflectProb)
+        {
+            scatterDir = reflect(unitDir, normal);
+        }
+        else
+        {
+            scatterDir = refract(unitDir, normal, refractionRatio);
+        }
+
+
+        payload.hitColor   = vec3(1.0);
+        payload.rayOrigin  = hitPos + 0.001 * normal;
+        payload.rayDir     = scatterDir;
+        payload.isEmissive = false;
+
         return;
     }
-    else
+
+
+    // 4. Lambertian & Metallic Materials
+    if (mat.matType == lambertian || mat.matType == metal)
     {
-	payload.colour = sph.colour.rgb;
-	 return;
+        PBRMaterial pbrMat;
+
+        pbrMat.albedo = mat.albedo.rgb;
+
+        if (mat.matType == lambertian)
+        {
+            pbrMat.roughness = 1.0;
+            pbrMat.metallic = 0.0;
+        }
+        else
+        {
+            pbrMat.roughness = clamp(mat.fuzz, 0.05, 1.0);
+            pbrMat.metallic = 1.0;
+        }
+
+
+        vec3 scatterDir;
+        float pdf;
+
+        vec3 brdf = EvaluatePBR(
+            pbrMat,
+            normal,
+            V,
+            seed,
+            scatterDir,
+            pdf
+        );
+
+
+        if (pdf <= 0.0001)
+        {
+            payload.hitColor   = vec3(0.0);
+            payload.isEmissive = true;
+            return;
+        }
+
+
+        payload.hitColor   = (brdf * max(dot(normal, scatterDir), 0.0)) / pdf;
+        payload.rayOrigin  = hitPos + 0.001 * normal;
+        payload.rayDir     = scatterDir;
+        payload.isEmissive = false;
+
+        return;
     }
 }
