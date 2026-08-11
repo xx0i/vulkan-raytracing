@@ -8,6 +8,9 @@ struct rayPayload
     vec3 rayDir;
     bool hit;
     bool isEmissive;
+    vec3 primaryNormal;
+    vec3 primaryAlbedo;
+    float hitDistance;
 };
 
 layout(location = 0) rayPayloadInEXT rayPayload payload;
@@ -20,11 +23,11 @@ layout(push_constant) uniform PushConstants
 
 void main()
 {
-    payload.hit = false;
-    
-    // CRITICAL: Set to true so rayGen knows this ray reached a light source (the sky)
-    // and terminates the path while accumulating hitColor.
+    payload.hit = false;    
     payload.isEmissive = true; 
+
+    // Far plane depth for rays that miss all geometry
+    payload.hitDistance = 10000.0;
 
     if (pc.missColour == 1)
     {

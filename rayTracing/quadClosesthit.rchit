@@ -53,6 +53,9 @@ struct rayPayload
     vec3 rayDir;
     bool hit;
     bool isEmissive;
+    vec3 primaryNormal;
+    vec3 primaryAlbedo;
+    float hitDistance;
 };
 
 layout(location = 0) rayPayloadInEXT rayPayload payload;
@@ -71,8 +74,7 @@ void main()
     uint instanceID = gl_InstanceCustomIndexEXT;
     aabbObject obj  = aabbObjs.aabbObj[instanceID]; 
 
-    // Directly map the first 6 room quads to their base materials (0 to 5)
-    // to bypass the CPU offset mapping into grey fallbacks
+    // Directly map the first 6 room quads to their base materials
     uint matIdx = obj.matIndex;
     if (instanceID < 6) 
     {
@@ -90,15 +92,30 @@ void main()
     // Ensure normal points OPPOSITE to incoming ray
     vec3 N = (dot(geoNormal, gl_WorldRayDirectionEXT) < 0.0) ? geoNormal : -geoNormal;
 
+    // ==================================================
+    // G-BUFFER CAPTURE
+    // ==================================================
+    payload.primaryNormal = N;
+    payload.primaryAlbedo = mat.albedo.rgb;
+    payload.hitDistance = gl_RayTmaxEXT; 
+
     // 1. Emissive Light Source Handling
     if (mat.matType == diffuseLight)
     {
-	payload.hitColor = mat.emission.rgb * mat.emission.a;
+        payload.hitColor = mat.emission.rgb * mat.emission.a;
         payload.isEmissive = true;
         return;
     }
 
-if (mat.matType == dielectric)
+    // ==================================================
+    // 2. SEED PSEUDO-RANDOM GENERATOR
+    // ==================================================
+    // Stable pixel ID + frame count (No floating-point distance jitter)
+    uint pixelID = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;
+    uint seed = initPRNG(pixelID, pc.frameIndex);
+
+    // 3. Dielectric (Glass) Handling
+    if (mat.matType == dielectric)
     {
         float refractionRatio = (dot(gl_WorldRayDirectionEXT, N) < 0.0) ? (1.0 / mat.refractionIndex) : mat.refractionIndex;
         vec3 unitDir = normalize(gl_WorldRayDirectionEXT);
@@ -108,12 +125,6 @@ if (mat.matType == dielectric)
 
         bool cannotRefract = refractionRatio * sinTheta > 1.0;
         vec3 direction;
-
-        // Seed RNG for Schlick's reflection probability
-        uint seed = randomSeed(
-            gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * 19349663, 
-            pc.frameIndex + uint(gl_HitTEXT * 1000.0)
-        );
 
         // Schlick's approximation for reflectance
         float r0 = (1.0 - refractionRatio) / (1.0 + refractionRatio);
@@ -136,33 +147,27 @@ if (mat.matType == dielectric)
         return;
     }
 
-    // 2. Seed Pseudo-Random Generator
-    uint seed = randomSeed(
-        gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * 19349663, 
-        pc.frameIndex + uint(gl_HitTEXT * 1000.0)
-    );
+    // 4. Lambertian / PBR Scattering
+    vec3 V = normalize(-gl_WorldRayDirectionEXT);
 
-    vec3 V = normalize(-gl_WorldRayDirectionEXT); // Vector back towards ray origin
-
-    // 3. Lambertian / PBR Scattering
     PBRMaterial pbrMat;
-    pbrMat.albedo    = mat.albedo.rgb;
+    pbrMat.albedo = mat.albedo.rgb;
    
     if (mat.matType == lambertian)
     {
-      pbrMat.roughness = 1.0;
-      pbrMat.metallic = 0.0;
+        pbrMat.roughness = 1.0;
+        pbrMat.metallic = 0.0;
     }
     else
     {
-      pbrMat.roughness = max(mat.fuzz, 0.05);
-      pbrMat.metallic = 1.0;
+        pbrMat.roughness = max(mat.fuzz, 0.05);
+        pbrMat.metallic = 1.0;
     }
 
     vec3 scatterDir;
     float pdf;
     
-    // Evaluate PBR BRDF & next ray direction
+    // Evaluate PBR BRDF & next ray direction (mutates 'seed' inout)
     vec3 brdf = EvaluatePBR(pbrMat, N, V, seed, scatterDir, pdf);
 
     // Fallback in case BRDF / PDF sampling fails
@@ -174,7 +179,7 @@ if (mat.matType == dielectric)
     }
 
     payload.hitColor   = (brdf * max(dot(N, scatterDir), 0.0)) / pdf;
-    payload.rayOrigin  = hitPos + 0.001 * N; // Bias origin along normal to prevent self-intersection
+    payload.rayOrigin  = hitPos + 0.001 * N; // Bias origin along normal
     payload.rayDir     = scatterDir;
     payload.isEmissive = false;
 }

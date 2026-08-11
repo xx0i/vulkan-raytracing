@@ -267,6 +267,8 @@ struct uniformBufferObject
 	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
+	glm::mat4 prevView;
+	glm::mat4 prevProj;
 };
 
 struct camera
@@ -360,6 +362,7 @@ struct pushConstants
 {
 	uint32_t frameIndex;
 	uint32_t missColour;
+	uint32_t stepSize;
 };
 
 class application
@@ -436,13 +439,36 @@ private:
 	VkImageView alphaImageView;
 	VkSampler alphaSampler;
 
-	VkImage computeImage;
-	VkDeviceMemory computeImageMemory;
-	VkImageView computeImageView;
+	VkSampler historySampler;
 
-	VkImage accumulationImage;
-	VkDeviceMemory accumulationImageMemory;
-	VkImageView accumulationImageView;
+	VkImage computeImageA;
+	VkDeviceMemory computeImageMemoryA;
+	VkImageView computeImageViewA;
+
+	VkImage computeImageB;
+	VkDeviceMemory computeImageMemoryB;
+	VkImageView computeImageViewB;
+
+	VkImage accumulationImageA;
+	VkDeviceMemory accumulationImageMemoryA;
+	VkImageView accumulationImageViewA;
+
+	VkImage accumulationImageB;
+	VkDeviceMemory accumulationImageMemoryB;
+	VkImageView accumulationImageViewB;
+
+	VkImage normalImage;
+	VkDeviceMemory normalImageMemory;
+	VkImageView normalImageView;
+
+
+	VkImage albedoImage;
+	VkDeviceMemory albedoImageMemory;
+	VkImageView albedoImageView;
+
+	VkImage velocityImage;
+	VkDeviceMemory velocityImageMemory;
+	VkImageView velocityImageView;
 
 	std::vector<vertex> vertices;
 	VkBuffer vertexBuffer;
@@ -562,6 +588,7 @@ private:
 
 	uint32_t frameCounter;
 	uint32_t missShaderColouring;
+	uint32_t currentStepSize;
 
 	void windowInitalization()
 	{
@@ -640,10 +667,19 @@ private:
 		createAlphaImage();
 		createAlphaImageView();
 		createAlphaSampler();
-		createComputeImage();
-		createComputeImageView();
-		createAccumulationImage();
-		createAccumulationImageView();
+		createHistorySampler();
+		createComputeImageA();
+		createComputeImageViewA();
+		createComputeImageB();
+		createComputeImageViewB();
+		createAccumulationImageA();
+		createAccumulationImageViewA();
+		createAccumulationImageB();
+		createAccumulationImageViewB();
+		createNormalImage();
+		createNormalImageView();
+		createAlbedoImage();
+		createAlbedoImageView();
 		loadModel();
 		//simpleDraw();
 		drawShapes();
@@ -732,13 +768,21 @@ private:
 		vkDestroyImage(device, alphaImage, nullptr);
 		vkFreeMemory(device, alphaImageMemory, nullptr);
 
-		vkDestroyImageView(device, computeImageView, nullptr);
-		vkDestroyImage(device, computeImage, nullptr);
-		vkFreeMemory(device, computeImageMemory, nullptr);
+		vkDestroyImageView(device, computeImageViewA, nullptr);
+		vkDestroyImage(device, computeImageA, nullptr);
+		vkFreeMemory(device, computeImageMemoryA, nullptr);
 
-		vkDestroyImageView(device, accumulationImageView, nullptr);
-		vkDestroyImage(device, accumulationImage, nullptr);
-		vkFreeMemory(device, accumulationImageMemory, nullptr);
+		vkDestroyImageView(device, computeImageViewB, nullptr);
+		vkDestroyImage(device, computeImageB, nullptr);
+		vkFreeMemory(device, computeImageMemoryB, nullptr);
+
+		vkDestroyImageView(device, accumulationImageViewA, nullptr);
+		vkDestroyImage(device, accumulationImageA, nullptr);
+		vkFreeMemory(device, accumulationImageMemoryA, nullptr);
+
+		vkDestroyImageView(device, accumulationImageViewB, nullptr);
+		vkDestroyImage(device, accumulationImageB, nullptr);
+		vkFreeMemory(device, accumulationImageMemoryB, nullptr);
 
 		vkDestroyImageView(device, depthImageView, nullptr);
 		vkDestroyImage(device, depthImage, nullptr);
@@ -747,6 +791,18 @@ private:
 		vkDestroyImageView(device, colourImageView, nullptr);
 		vkDestroyImage(device, colourImage, nullptr);
 		vkFreeMemory(device, colourImageMemory, nullptr);
+
+		vkDestroyImageView(device, normalImageView, nullptr);
+		vkDestroyImage(device, normalImage, nullptr);
+		vkFreeMemory(device, normalImageMemory, nullptr);
+
+		vkDestroyImageView(device, albedoImageView, nullptr);
+		vkDestroyImage(device, albedoImage, nullptr);
+		vkFreeMemory(device, albedoImageMemory, nullptr);
+
+		vkDestroyImageView(device, velocityImageView, nullptr);
+		vkDestroyImage(device, velocityImage, nullptr);
+		vkFreeMemory(device, velocityImageMemory, nullptr);
 
 		for (auto imageView : swapChainImageViews)
 			vkDestroyImageView(device, imageView, nullptr);
@@ -790,6 +846,8 @@ private:
 		vkDestroyImageView(device, textureImageView, nullptr);
 		vkDestroyImage(device, textureImage, nullptr);
 		vkFreeMemory(device, textureImageMemory, nullptr);
+
+		vkDestroySampler(device, historySampler, nullptr);
 
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
@@ -904,11 +962,17 @@ private:
 		createAlphaImageView();
 		createAlphaSampler();
 
-		createComputeImage();
-		createComputeImageView();
+		createComputeImageA();
+		createComputeImageViewA();
 
-		createAccumulationImage();
-		createAccumulationImageView();
+		createComputeImageB();
+		createComputeImageViewB();
+
+		createAccumulationImageA();
+		createAccumulationImageViewA();
+
+		createAccumulationImageB();
+		createAccumulationImageViewA();
 
 		VkClearColorValue clearColor = { { 0.0f, 0.0f, 0.0f, 0.0f } };
 
@@ -923,7 +987,15 @@ private:
 
 		vkCmdClearColorImage(
 			cmd,
-			accumulationImage,
+			accumulationImageA,
+			VK_IMAGE_LAYOUT_GENERAL, // or transition from UNDEFINED → GENERAL first
+			&clearColor,
+			1,
+			&range);
+
+		vkCmdClearColorImage(
+			cmd,
+			accumulationImageB,
 			VK_IMAGE_LAYOUT_GENERAL, // or transition from UNDEFINED → GENERAL first
 			&clearColor,
 			1,
@@ -1464,10 +1536,32 @@ private:
 		aabbObjectsBinding.descriptorCount = 1;
 		aabbObjectsBinding.stageFlags = VK_SHADER_STAGE_INTERSECTION_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
-		std::array<VkDescriptorSetLayoutBinding, 11> bindings =
+		VkDescriptorSetLayoutBinding gbufferNormalBinding{};
+		gbufferNormalBinding.binding = 11;
+		gbufferNormalBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		gbufferNormalBinding.descriptorCount = 1;
+		gbufferNormalBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+		gbufferNormalBinding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutBinding gbufferAlbedoBinding{};
+		gbufferAlbedoBinding.binding = 12;
+		gbufferAlbedoBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		gbufferAlbedoBinding.descriptorCount = 1;
+		gbufferAlbedoBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+		gbufferAlbedoBinding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutBinding gbufferVelocityBinding{};
+		gbufferVelocityBinding.binding = 13;
+		gbufferVelocityBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		gbufferVelocityBinding.descriptorCount = 1;
+		gbufferVelocityBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+		gbufferVelocityBinding.pImmutableSamplers = nullptr;
+
+
+		std::array<VkDescriptorSetLayoutBinding, 14> bindings =
 		{
 			topLevelASBinding, outputImageLayoutBinding, uboLayoutBinding, texSamplerLayoutBinding, vertexBinding, indexBinding, sphereBinding,
-			materialBinding, quadBinding, geoTypeBinding, aabbObjectsBinding
+			materialBinding, quadBinding, geoTypeBinding, aabbObjectsBinding, gbufferNormalBinding, gbufferAlbedoBinding, gbufferVelocityBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1480,6 +1574,7 @@ private:
 			throw std::runtime_error("failed to create descriptor set layout");
 		}
 	}
+
 
 	void createAlphaDescriptorSetLayout()
 	{
@@ -1516,24 +1611,46 @@ private:
 		outputImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		outputImageBinding.descriptorCount = 1;
 		outputImageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-		outputImageBinding.pImmutableSamplers = nullptr;
 
 		VkDescriptorSetLayoutBinding inputImageBinding{};
 		inputImageBinding.binding = 1;
 		inputImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		inputImageBinding.descriptorCount = 1;
 		inputImageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-		inputImageBinding.pImmutableSamplers = nullptr;
 
-		VkDescriptorSetLayoutBinding accumulationImageBinding{};
-		accumulationImageBinding.binding = 2;
-		accumulationImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		accumulationImageBinding.descriptorCount = 1;
-		accumulationImageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-		accumulationImageBinding.pImmutableSamplers = nullptr;
+		VkDescriptorSetLayoutBinding accumulationSamplerBinding{};
+		accumulationSamplerBinding.binding = 2;
+		accumulationSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		accumulationSamplerBinding.descriptorCount = 1;
+		accumulationSamplerBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 3> bindings = { outputImageBinding, inputImageBinding, accumulationImageBinding };
+		VkDescriptorSetLayoutBinding accumulationStorageBinding{};
+		accumulationStorageBinding.binding = 3;
+		accumulationStorageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		accumulationStorageBinding.descriptorCount = 1;
+		accumulationStorageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+		VkDescriptorSetLayoutBinding gbufferNormalBinding{};
+		gbufferNormalBinding.binding = 4;
+		gbufferNormalBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		gbufferNormalBinding.descriptorCount = 1;
+		gbufferNormalBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		VkDescriptorSetLayoutBinding gbufferAlbedoBinding{};
+		gbufferAlbedoBinding.binding = 5;
+		gbufferAlbedoBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		gbufferAlbedoBinding.descriptorCount = 1;
+		gbufferAlbedoBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		VkDescriptorSetLayoutBinding gbufferVelocityBinding{};
+		gbufferVelocityBinding.binding = 6;
+		gbufferVelocityBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		gbufferVelocityBinding.descriptorCount = 1;
+		gbufferVelocityBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 7> bindings = {
+			outputImageBinding, inputImageBinding, accumulationSamplerBinding, accumulationStorageBinding, gbufferNormalBinding, gbufferAlbedoBinding, gbufferVelocityBinding
+		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1819,7 +1936,7 @@ private:
 		std::array<VkDescriptorSetLayout, 2> layouts = { rayTracingDescriptorSetLayout, alphaDescriptorSetLayout };
 
 		VkPushConstantRange pushConstantRange{};
-		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR;
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 		pushConstantRange.offset = 0;
 		pushConstantRange.size = sizeof(pushConstants);
 
@@ -1870,9 +1987,9 @@ private:
 		computeShaderStageInfo.pName = "main";
 
 		VkPushConstantRange pushConstantRange{};
-		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 		pushConstantRange.offset = 0;
-		pushConstantRange.size = sizeof(uint32_t);
+		pushConstantRange.size = sizeof(pushConstants);
 
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2219,10 +2336,10 @@ private:
 
 	void createStoreImage()
 	{
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, storeImage, storeImageMemory);
 
-		transitionImageLayout(storeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+		transitionImageLayout(storeImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
 
 	void createAlphaImage()
@@ -2233,20 +2350,60 @@ private:
 		transitionImageLayout(alphaImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
 
-	void createComputeImage()
+	void createComputeImageA()
 	{
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeImage, computeImageMemory);
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeImageA, computeImageMemoryA);
 
-		transitionImageLayout(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+		transitionImageLayout(computeImageA, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
 
-	void createAccumulationImage()
+	void createComputeImageB()
 	{
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, accumulationImage, accumulationImageMemory);
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, computeImageB, computeImageMemoryB);
 
-		transitionImageLayout(accumulationImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+		transitionImageLayout(computeImageB, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createAccumulationImageA()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, accumulationImageA, accumulationImageMemoryA);
+
+		transitionImageLayout(accumulationImageA, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createAccumulationImageB()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, accumulationImageB, accumulationImageMemoryB);
+
+		transitionImageLayout(accumulationImageB, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createNormalImage()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, normalImage, normalImageMemory);
+
+		transitionImageLayout(normalImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createAlbedoImage()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, albedoImage, albedoImageMemory);
+
+		transitionImageLayout(albedoImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createVelocityImage()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, velocityImage, velocityImageMemory);
+
+		transitionImageLayout(velocityImage, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
 
 	void createTextureImageView()
@@ -2256,7 +2413,7 @@ private:
 
 	void createStoreImageView()
 	{
-		storeImageView = createImageView(storeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+		storeImageView = createImageView(storeImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 	}
 
 	void createAlphaImageView()
@@ -2264,14 +2421,39 @@ private:
 		alphaImageView = createImageView(alphaImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 	}
 
-	void createComputeImageView()
+	void createComputeImageViewA()
 	{
-		computeImageView = createImageView(computeImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+		computeImageViewA = createImageView(computeImageA, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 	}
 
-	void createAccumulationImageView()
+	void createComputeImageViewB()
 	{
-		accumulationImageView = createImageView(accumulationImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+		computeImageViewB = createImageView(computeImageB, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createAccumulationImageViewA()
+	{
+		accumulationImageViewA = createImageView(accumulationImageA, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createAccumulationImageViewB()
+	{
+		accumulationImageViewB = createImageView(accumulationImageB, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createNormalImageView()
+	{
+		normalImageView = createImageView(normalImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createAlbedoImageView()
+	{
+		albedoImageView = createImageView(albedoImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createVelocityImageView()
+	{
+		velocityImageView = createImageView(velocityImage, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 	}
 
 	void createTextureSampler()
@@ -2329,6 +2511,27 @@ private:
 		if (vkCreateSampler(device, &samplerInfo, nullptr, &alphaSampler) != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to create texture sampler");
+		}
+	}
+
+	void createHistorySampler()
+	{
+		VkSamplerCreateInfo samplerInfo{};
+		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		samplerInfo.magFilter = VK_FILTER_LINEAR; // Bilinear filtering
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; // Don't wrap screen edges
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerInfo.anisotropyEnable = VK_FALSE;
+		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+		samplerInfo.unnormalizedCoordinates = VK_FALSE; // Expects [0.0, 1.0] UV coordinates
+		samplerInfo.compareEnable = VK_FALSE;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+		if (vkCreateSampler(device, &samplerInfo, nullptr, &historySampler) != VK_SUCCESS)
+		{
+			throw std::runtime_error("failed to create history sampler!");
 		}
 	}
 
@@ -3890,7 +4093,7 @@ private:
 		descriptorPoolSizes[0].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
 
 		descriptorPoolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		descriptorPoolSizes[1].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
+		descriptorPoolSizes[1].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 4);
 
 		descriptorPoolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		descriptorPoolSizes[2].descriptorCount = static_cast<uint32_t>(maxFramesInFlight);
@@ -3921,20 +4124,25 @@ private:
 
 	void createComputeDescriptorPool()
 	{
-		VkDescriptorPoolSize  descriptorPoolSizes{};
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
-		descriptorPoolSizes.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		descriptorPoolSizes.descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 3);
+		// Storage Images: Output, Input, Accumulation Write, Normal, Albedo, Velocity
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 6 * 2);
+
+		// Combined Image Samplers: Accumulation Read
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 1 * 2);
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		descriptorPoolInfo.poolSizeCount = 1;
-		descriptorPoolInfo.pPoolSizes = &descriptorPoolSizes;
-		descriptorPoolInfo.maxSets = static_cast<uint32_t>(maxFramesInFlight);
+		descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+		descriptorPoolInfo.pPoolSizes = poolSizes.data();
+		descriptorPoolInfo.maxSets = static_cast<uint32_t>(maxFramesInFlight * 2);
 
 		if (vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &computeDescriptorPool) != VK_SUCCESS)
 		{
-			throw std::runtime_error("failed to create descriptor pool");
+			throw std::runtime_error("failed to create compute descriptor pool");
 		}
 	}
 
@@ -4123,7 +4331,19 @@ private:
 			aabbObjectsBufferInfo.offset = 0;
 			aabbObjectsBufferInfo.range = sizeof(gpuAabbs[0]) * gpuAabbs.size();
 
-			std::array<VkWriteDescriptorSet, 11> writeDescriptorSets{};
+			VkDescriptorImageInfo normalImageInfo{};
+			normalImageInfo.imageView = normalImageView;
+			normalImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+			VkDescriptorImageInfo albedoImageInfo{};
+			albedoImageInfo.imageView = albedoImageView;
+			albedoImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+			VkDescriptorImageInfo velocityImageInfo{};
+			velocityImageInfo.imageView = velocityImageView;
+			velocityImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+			std::array<VkWriteDescriptorSet, 14> writeDescriptorSets{};
 
 			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			writeDescriptorSets[0].dstSet = rayTracingDescriptorSets[i];
@@ -4206,6 +4426,27 @@ private:
 			writeDescriptorSets[10].descriptorCount = 1;
 			writeDescriptorSets[10].pBufferInfo = &aabbObjectsBufferInfo;
 
+			writeDescriptorSets[11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[11].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[11].dstBinding = 11;
+			writeDescriptorSets[11].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			writeDescriptorSets[11].descriptorCount = 1;
+			writeDescriptorSets[11].pImageInfo = &normalImageInfo;
+
+			writeDescriptorSets[12].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[12].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[12].dstBinding = 12;
+			writeDescriptorSets[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			writeDescriptorSets[12].descriptorCount = 1;
+			writeDescriptorSets[12].pImageInfo = &albedoImageInfo;
+
+			writeDescriptorSets[13].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSets[13].dstSet = rayTracingDescriptorSets[i];
+			writeDescriptorSets[13].dstBinding = 13;
+			writeDescriptorSets[13].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			writeDescriptorSets[13].descriptorCount = 1;
+			writeDescriptorSets[13].pImageInfo = &velocityImageInfo;
+
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
 	}
@@ -4261,63 +4502,116 @@ private:
 
 	void createComputeDescriptorSets()
 	{
-		std::vector<VkDescriptorSetLayout> layouts(maxFramesInFlight, computeDescriptorSetLayout);
+		uint32_t totalSets = static_cast<uint32_t>(maxFramesInFlight) * 2;
+		std::vector<VkDescriptorSetLayout> layouts(totalSets, computeDescriptorSetLayout);
 		VkDescriptorSetAllocateInfo descriptorSetInfo{};
 		descriptorSetInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		descriptorSetInfo.descriptorPool = computeDescriptorPool;
-		descriptorSetInfo.descriptorSetCount = static_cast<uint32_t>(maxFramesInFlight);
+		descriptorSetInfo.descriptorSetCount = totalSets;
 		descriptorSetInfo.pSetLayouts = layouts.data();
 
-		computeDescriptorSets.resize(maxFramesInFlight);
+		computeDescriptorSets.resize(totalSets);
 		if (vkAllocateDescriptorSets(device, &descriptorSetInfo, computeDescriptorSets.data()) != VK_SUCCESS)
 		{
-			throw std::runtime_error("failed to allocate descriptor sets");
+			throw std::runtime_error("failed to allocate compute descriptor sets");
 		}
 
 		for (size_t i = 0; i < maxFramesInFlight; i++)
 		{
-			VkDescriptorImageInfo storeImageInfo{};
-			storeImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-			storeImageInfo.imageView = storeImageView;
+			size_t pingIndex = i * 2;
+			size_t pongIndex = i * 2 + 1;
 
-			VkDescriptorImageInfo computeImageInfo{};
-			computeImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-			computeImageInfo.imageView = computeImageView;
+			// ==========================================
+			// TEMPORAL HISTORY PING-PONG ACROSS FRAMES
+			// ==========================================
+			// Frame 0: Read history from A, write history to B
+			// Frame 1: Read history from B, write history to A
+			VkImageView readHistoryView = (i % 2 == 0) ? accumulationImageViewA : accumulationImageViewB;
+			VkImageView writeHistoryView = (i % 2 == 0) ? accumulationImageViewB : accumulationImageViewA;
 
-			VkDescriptorImageInfo accumulationImageInfo{};
-			accumulationImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-			accumulationImageInfo.imageView = accumulationImageView;
+			VkDescriptorImageInfo accumSamplerInfo{ historySampler, readHistoryView, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo accumStorageInfo{ VK_NULL_HANDLE, writeHistoryView, VK_IMAGE_LAYOUT_GENERAL };
 
-			std::array<VkWriteDescriptorSet, 3> writeDescriptorSets{};
+			// Shared G-Buffer descriptors
+			VkDescriptorImageInfo normalImageInfo{ VK_NULL_HANDLE, normalImageView, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo albedoImageInfo{ VK_NULL_HANDLE, albedoImageView, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo velocityImageInfo{ VK_NULL_HANDLE, velocityImageView, VK_IMAGE_LAYOUT_GENERAL };
 
-			writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writeDescriptorSets[0].dstSet = computeDescriptorSets[i];
-			writeDescriptorSets[0].dstBinding = 0;
-			writeDescriptorSets[0].dstArrayElement = 0;
-			writeDescriptorSets[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			writeDescriptorSets[0].descriptorCount = 1;
-			writeDescriptorSets[0].pImageInfo = &computeImageInfo;
+			// ==========================================
+			// 1. PING SET (Pass 0: Reads storeImageView -> Writes computeImageViewA)
+			// ==========================================
+			VkDescriptorImageInfo pingOutputInfo{ VK_NULL_HANDLE, computeImageViewA, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo pingInputInfo{ VK_NULL_HANDLE, storeImageView, VK_IMAGE_LAYOUT_GENERAL };
 
-			writeDescriptorSets[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writeDescriptorSets[1].dstSet = computeDescriptorSets[i];
-			writeDescriptorSets[1].dstBinding = 1;
-			writeDescriptorSets[1].dstArrayElement = 0;
-			writeDescriptorSets[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			writeDescriptorSets[1].descriptorCount = 1;
-			writeDescriptorSets[1].pImageInfo = &storeImageInfo;
+			std::array<VkWriteDescriptorSet, 7> pingWrites{};
 
-			writeDescriptorSets[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writeDescriptorSets[2].dstSet = computeDescriptorSets[i];
-			writeDescriptorSets[2].dstBinding = 2;
-			writeDescriptorSets[2].dstArrayElement = 0;
-			writeDescriptorSets[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			writeDescriptorSets[2].descriptorCount = 1;
-			writeDescriptorSets[2].pImageInfo = &accumulationImageInfo;
+			pingWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[0].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[0].dstBinding = 0; // Output
+			pingWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			pingWrites[0].descriptorCount = 1;
+			pingWrites[0].pImageInfo = &pingOutputInfo;
 
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
-			/*printf("createComputeDescriptorSets: computeImageView = 0x%llx, accumulationImageView = 0x%llx\n",
-				(unsigned long long)computeImageInfo.imageView,
-				(unsigned long long)accumulationImageInfo.imageView);*/
+			pingWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[1].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[1].dstBinding = 1; // Input
+			pingWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			pingWrites[1].descriptorCount = 1;
+			pingWrites[1].pImageInfo = &pingInputInfo;
+
+			pingWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[2].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[2].dstBinding = 2; // Sampler (Read History)
+			pingWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			pingWrites[2].descriptorCount = 1;
+			pingWrites[2].pImageInfo = &accumSamplerInfo;
+
+			pingWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[3].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[3].dstBinding = 3; // Storage Image (Write History)
+			pingWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			pingWrites[3].descriptorCount = 1;
+			pingWrites[3].pImageInfo = &accumStorageInfo;
+
+			pingWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[4].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[4].dstBinding = 4;
+			pingWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			pingWrites[4].descriptorCount = 1;
+			pingWrites[4].pImageInfo = &normalImageInfo;
+
+			pingWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[5].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[5].dstBinding = 5;
+			pingWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			pingWrites[5].descriptorCount = 1;
+			pingWrites[5].pImageInfo = &albedoImageInfo;
+
+			pingWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			pingWrites[6].dstSet = computeDescriptorSets[pingIndex];
+			pingWrites[6].dstBinding = 6;
+			pingWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			pingWrites[6].descriptorCount = 1;
+			pingWrites[6].pImageInfo = &velocityImageInfo;
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(pingWrites.size()), pingWrites.data(), 0, nullptr);
+
+			// ==========================================
+			// 2. PONG SET (Pass 1: Reads computeImageViewA -> Writes computeImageViewB)
+			// ==========================================
+			VkDescriptorImageInfo pongOutputInfo{ VK_NULL_HANDLE, computeImageViewB, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo pongInputInfo{ VK_NULL_HANDLE, computeImageViewA, VK_IMAGE_LAYOUT_GENERAL };
+
+			std::array<VkWriteDescriptorSet, 7> pongWrites = pingWrites;
+
+			for (auto& write : pongWrites)
+			{
+				write.dstSet = computeDescriptorSets[pongIndex];
+			}
+			pongWrites[0].pImageInfo = &pongOutputInfo;
+			pongWrites[1].pImageInfo = &pongInputInfo;
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(pongWrites.size()), pongWrites.data(), 0, nullptr);
 		}
 	}
 
@@ -4516,7 +4810,6 @@ private:
 
 	void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
 	{
-
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
@@ -4524,22 +4817,24 @@ private:
 			throw std::runtime_error("failed to begin recording command buffer");
 		}
 
+		vkCmdResetQueryPool(commandBuffer, timeStampQueryPools[currentFrame], 0, 6);
+
 		VkImageSubresourceRange range{};
 		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		range.levelCount = 1;
 		range.layerCount = 1;
-		transitionImageLayoutInCommandBuffer(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, range);
 
-		transitionImageLayoutInCommandBuffer(commandBuffer, storeImage,
+		transitionImageLayoutInCommandBuffer(
+			commandBuffer,
+			swapChainImages[imageIndex],
 			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_GENERAL,
-			range);
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			range
+		);
 
-		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage,
-			VK_IMAGE_LAYOUT_UNDEFINED,
-			VK_IMAGE_LAYOUT_GENERAL,
-			range);
-
+		// =========================================================================
+		// 1. RAY TRACING PASS
+		// =========================================================================
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rayTracingPipeline);
 
 		std::array<VkDescriptorSet, 2> descriptorSetsToBind = {
@@ -4547,68 +4842,187 @@ private:
 			alphaDescriptorSets[currentFrame]
 		};
 
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+		vkCmdBindDescriptorSets(
+			commandBuffer,
+			VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
 			rayTracingPipelineLayout, 0,
 			static_cast<uint32_t>(descriptorSetsToBind.size()),
-			descriptorSetsToBind.data(), 0, nullptr);
+			descriptorSetsToBind.data(), 0, nullptr
+		);
 
-		pushConstants pcData = { frameCounter, missShaderColouring };
-		vkCmdPushConstants(commandBuffer, rayTracingPipelineLayout,
-			VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR,
-			0, sizeof(pushConstants), &pcData);
+		pushConstants pcData = { frameCounter, missShaderColouring, currentStepSize };
+		vkCmdPushConstants(
+			commandBuffer,
+			rayTracingPipelineLayout,
+			VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+			0, sizeof(pushConstants), &pcData
+		);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 0);
 
-		CmdTraceRaysKHR(device, commandBuffer, &raygenRegion, &missRegion,
-			&hitRegion, &callableRegion, swapChainExtent.width, swapChainExtent.height, 1);
+		CmdTraceRaysKHR(
+			device, commandBuffer,
+			&raygenRegion, &missRegion, &hitRegion, &callableRegion,
+			swapChainExtent.width, swapChainExtent.height, 1
+		);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 1);
-		
-		VkImageMemoryBarrier rtToComputeBarrier{};
-		rtToComputeBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		rtToComputeBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-		rtToComputeBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-		rtToComputeBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // RT wrote
-		rtToComputeBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT; // compute will read/write
-		rtToComputeBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		rtToComputeBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
-		rtToComputeBarrier.image = storeImage;
-		rtToComputeBarrier.subresourceRange = range;
+		// Barrier: Ray Tracing output -> Compute Shader input
+		std::array<VkImageMemoryBarrier, 3> rtBarriers{};
+
+		rtBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		rtBarriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+		rtBarriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		rtBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		rtBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		rtBarriers[0].image = storeImage;
+		rtBarriers[0].subresourceRange = range;
+
+		rtBarriers[1] = rtBarriers[0];
+		rtBarriers[1].image = normalImage;
+
+		rtBarriers[2] = rtBarriers[0];
+		rtBarriers[2].image = albedoImage;
 
 		vkCmdPipelineBarrier(
 			commandBuffer,
 			VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
 			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			0,
-			0, nullptr,
-			0, nullptr,
-			1, &rtToComputeBarrier
+			0, 0, nullptr, 0, nullptr,
+			static_cast<uint32_t>(rtBarriers.size()), rtBarriers.data()
 		);
 
+		// =========================================================================
+		// 2. DENOISING COMPUTE PASSES (3-Pass Wavelet Filter Ping-Pong)
+		// =========================================================================
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-			computePipelineLayout, 0, 1,
-			&computeDescriptorSets[currentFrame], 0, nullptr);
+
+		uint32_t stepSizes[] = { 1, 2, 4 };
+		uint32_t groupCountX = (swapChainExtent.width + 15) / 16;
+		uint32_t groupCountY = (swapChainExtent.height + 15) / 16;
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 2);
-		vkCmdDispatch(commandBuffer, swapChainExtent.width, swapChainExtent.height, 1);
+
+		for (uint32_t i = 0; i < 3; ++i)
+		{
+			// Update step size push constant
+			pushConstants computePc = { frameCounter, missShaderColouring, stepSizes[i] };
+			vkCmdPushConstants(
+				commandBuffer,
+				computePipelineLayout,
+				VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+				0, sizeof(pushConstants), &computePc
+			);
+
+			// Ping-Pong Descriptor Binding:
+			// i = 0: Ping Set (Reads storeImage -> Writes computeImageA)
+			// i = 1: Pong Set (Reads computeImageA -> Writes computeImageB)
+			// i = 2: Ping Set (Reads computeImageB -> Writes computeImageA)
+			uint32_t activeSetIndex = (currentFrame * 2) + (i % 2);
+
+			vkCmdBindDescriptorSets(
+				commandBuffer,
+				VK_PIPELINE_BIND_POINT_COMPUTE,
+				computePipelineLayout,
+				0, 1,
+				&computeDescriptorSets[activeSetIndex],
+				0, nullptr
+			);
+
+			vkCmdDispatch(commandBuffer, groupCountX, groupCountY, 1);
+
+			// Barrier between passes so writes complete before the next pass reads
+			if (i < 2)
+			{
+				VkImageMemoryBarrier passBarrier{};
+				passBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				passBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+				passBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+				passBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+				passBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+				passBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				passBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+				// If i == 0, we just wrote to computeImageA.
+				// If i == 1, we just wrote to computeImageB.
+				passBarrier.image = (i % 2 == 0) ? computeImageA : computeImageB;
+				passBarrier.subresourceRange = range;
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					0, 0, nullptr, 0, nullptr,
+					1, &passBarrier
+				);
+			}
+		}
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 3);
 
-		transitionImageLayoutInCommandBuffer(commandBuffer, computeImage,
+		// =========================================================================
+        // 3. BLIT FINAL FILTERED RESULT TO SWAPCHAIN
+        // =========================================================================
+        // Pass 3 (i = 2) wrote to computeImageA, so computeImageA contains the final result.
+		VkImage finalOutputImage = computeImageA;
+
+		transitionImageLayoutInCommandBuffer(
+			commandBuffer, finalOutputImage,
 			VK_IMAGE_LAYOUT_GENERAL,
-			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, range);
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			range
+		);
 
-		VkImageCopy copyRegion{};
-		copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.srcSubresource.layerCount = 1;
-		copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.dstSubresource.layerCount = 1;
-		copyRegion.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
+		VkImageBlit blitRegion{};
 
-		vkCmdCopyImage(commandBuffer, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+		// Source subresource and region bounds (computeImageA - 16F)
+		blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		blitRegion.srcSubresource.mipLevel = 0;
+		blitRegion.srcSubresource.baseArrayLayer = 0;
+		blitRegion.srcSubresource.layerCount = 1;
+		blitRegion.srcOffsets[0] = { 0, 0, 0 };
+		blitRegion.srcOffsets[1] = { static_cast<int32_t>(swapChainExtent.width), static_cast<int32_t>(swapChainExtent.height), 1 };
 
+		// Destination subresource and region bounds (swapChainImages - 8Bit sRGB)
+		blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		blitRegion.dstSubresource.mipLevel = 0;
+		blitRegion.dstSubresource.baseArrayLayer = 0;
+		blitRegion.dstSubresource.layerCount = 1;
+		blitRegion.dstOffsets[0] = { 0, 0, 0 };
+		blitRegion.dstOffsets[1] = { static_cast<int32_t>(swapChainExtent.width), static_cast<int32_t>(swapChainExtent.height), 1 };
+
+		vkCmdBlitImage(
+			commandBuffer,
+			finalOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &blitRegion,
+			VK_FILTER_NEAREST // Use VK_FILTER_LINEAR if you are upscaling/downscaling dimensions
+		);
+
+		// Restore final compute image layout back to GENERAL for next frame
+		VkImageMemoryBarrier backToGeneralBarrier{};
+		backToGeneralBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		backToGeneralBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		backToGeneralBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		backToGeneralBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		backToGeneralBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		backToGeneralBarrier.image = finalOutputImage;
+		backToGeneralBarrier.subresourceRange = range;
+		backToGeneralBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		backToGeneralBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 0, nullptr, 0, nullptr,
+			1, &backToGeneralBarrier
+		);
+
+		// =========================================================================
+		// 4. IMGUI RENDER PASS
+		// =========================================================================
 		VkRenderPassBeginInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassInfo.renderPass = imguiRenderPass;
@@ -4625,9 +5039,7 @@ private:
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 4);
 
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
 		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
-
 		vkCmdEndRenderPass(commandBuffer);
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 5);
@@ -4726,13 +5138,40 @@ private:
 		return originalPosition != camera.position;
 	}
 
+	// Store history per swapchain/in-flight frame
 	void updateUniformBuffer(uint32_t currentImage)
 	{
+		// Static vectors declared INSIDE the method to fix scope/syntax issues
+		static std::vector<glm::mat4> lastViews;
+		static std::vector<glm::mat4> lastProjs;
+		static bool initialized = false;
+
+		// Lazily initialize on the very first execution
+		if (!initialized)
+		{
+			glm::mat4 initialView = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
+			glm::mat4 initialProj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
+			initialProj[1][1] *= -1;
+
+			lastViews.resize(maxFramesInFlight, initialView);
+			lastProjs.resize(maxFramesInFlight, initialProj);
+			initialized = true;
+		}
+
 		uniformBufferObject ubo{};
-		ubo.model = glm::mat4(-1.0f);
+
+		// Assign history corresponding to THIS frame slot
+		ubo.prevView = lastViews[currentImage];
+		ubo.prevProj = lastProjs[currentImage];
+
+		ubo.model = glm::mat4(1.0f);
 		ubo.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
 		ubo.proj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
 		ubo.proj[1][1] *= -1;
+
+		// Save current frame's matrices to THIS frame slot's history
+		lastViews[currentImage] = ubo.view;
+		lastProjs[currentImage] = ubo.proj;
 
 		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}

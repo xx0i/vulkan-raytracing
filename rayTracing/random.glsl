@@ -2,7 +2,8 @@
 
 const float PI = 3.14159265359;
 
-uint randomSeed(uint val0, uint val1)
+// Primary Tea-Hash PRNG Initializer
+uint initSeed(uint val0, uint val1)
 {
     uint v0 = val0, v1 = val1, s0 = 0;
 
@@ -17,12 +18,20 @@ uint randomSeed(uint val0, uint val1)
     return v0;
 }
 
+// PCG Step (Mutates seed state via inout)
 uint randomInt(inout uint seed)
 {
-    // PCG Hash: Far superior quality to simple LCG, avoids zero-state locks
     seed = seed * 747796405u + 2891336453u;
     uint word = ((seed >> ((seed >> 28u) + 4u)) ^ seed) * 277803737u;
     return (word >> 22u) ^ word;
+}
+
+// Helper to initialize and immediately step the PRNG once
+uint initPRNG(uint pixelID, uint frameIndex)
+{
+    uint seed = initSeed(pixelID, frameIndex);
+    randomInt(seed); // Step once to scramble initial hash state
+    return seed;
 }
 
 float randomFloat(inout uint seed)
@@ -30,7 +39,7 @@ float randomFloat(inout uint seed)
     return float(randomInt(seed)) * (1.0 / 4294967296.0); // Exact [0.0, 1.0) range
 }
 
-// Direct Unit Vector on Sphere (No loops!)
+// Direct Unit Vector on Sphere
 vec3 randomUnitVector(inout uint seed)
 {
     float z = randomFloat(seed) * 2.0 - 1.0;
@@ -39,7 +48,7 @@ vec3 randomUnitVector(inout uint seed)
     return vec3(r * cos(a), r * sin(a), z);
 }
 
-// Cosine-Weighted Hemisphere Sample (Ideal for Lambertian Diffuse)
+// Cosine-Weighted Hemisphere Sample
 vec3 sampleHemisphereCosine(vec3 normal, inout uint seed)
 {
     vec3 u = randomUnitVector(seed);

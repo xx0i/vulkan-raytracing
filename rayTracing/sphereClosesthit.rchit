@@ -56,6 +56,9 @@ struct rayPayload
     vec3 rayDir;
     bool hit;
     bool isEmissive;
+    vec3 primaryNormal;
+    vec3 primaryAlbedo;
+    float hitDistance;
 };
 
 layout(location = 0) rayPayloadInEXT rayPayload payload;
@@ -77,7 +80,6 @@ float schlick(float cosine, float refractIndex)
 {
     float r0 = (1.0 - refractIndex) / (1.0 + refractIndex);
     r0 = r0 * r0;
-
     return r0 + (1.0 - r0) * pow(1.0 - cosine, 5.0);
 }
 
@@ -92,17 +94,7 @@ void main()
     vec3 hitPos = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
     vec3 normal = normalize(hitPos - sph.center);
 
-    // 1. Emissive Material
-    if (mat.matType == diffuseLight)
-    {
-        float strength = mat.emission.a > 0.0 ? mat.emission.a : 15.0;
-
-        payload.hitColor   = mat.albedo.rgb * strength;
-        payload.isEmissive = true;
-        return;
-    }
-
-    // 2. Procedural Sphere Overrides
+    // 1. Procedural Sphere Overrides
     if (sph.normalColouring == 1)
     {
         payload.hitColor   = 0.5 * (normal + vec3(1.0));
@@ -135,42 +127,43 @@ void main()
         mat.albedo.rgb = mix(vec3(1.0), vec3(0.0), marble);
     }
 
-    // Face normal towards ray
+    // Face normal towards incoming ray
     normal = (dot(normal, gl_WorldRayDirectionEXT) > 0.0) ? -normal : normal;
 
+    // ==================================================
+    // G-BUFFER CAPTURE
+    // ==================================================
+    payload.primaryNormal = normal;
+    payload.primaryAlbedo = mat.albedo.rgb;
+    payload.hitDistance   = gl_RayTmaxEXT;
 
-    uint seed = randomSeed(
-        gl_LaunchIDEXT.x + pc.frameIndex * 73856093,
-        gl_LaunchIDEXT.y + pc.frameIndex * 19349663
-    );
+    // ==================================================
+    // SEED PSEUDO-RANDOM GENERATOR
+    // ==================================================
+    uint pixelID = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;
+    uint seed    = initPRNG(pixelID, pc.frameIndex);
 
-    vec3 V = normalize(-gl_WorldRayDirectionEXT);
+    // 2. Emissive Material
+    if (mat.matType == diffuseLight)
+    {
+        float strength = mat.emission.a > 0.0 ? mat.emission.a : 15.0;
 
+        payload.hitColor   = mat.albedo.rgb * strength;
+        payload.isEmissive = true;
+        return;
+    }
 
     // 3. Dielectric Materials
     if (mat.matType == dielectric)
     {
         vec3 unitDir = normalize(gl_WorldRayDirectionEXT);
 
-        float refractionRatio =
-            (dot(unitDir, normal) < 0.0) ?
-            (1.0 / mat.refractionIndex) :
-            mat.refractionIndex;
+        float refractionRatio = (dot(unitDir, normal) < 0.0) ? (1.0 / mat.refractionIndex) : mat.refractionIndex;
+        float cosTheta        = min(dot(-unitDir, normal), 1.0);
+        float sinTheta        = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
 
-
-        float cosTheta = min(dot(-unitDir, normal), 1.0);
-
-        float sinTheta =
-            sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
-
-
-        bool cannotRefract =
-            refractionRatio * sinTheta > 1.0;
-
-
-        float reflectProb =
-            schlick(cosTheta, mat.refractionIndex);
-
+        bool cannotRefract = refractionRatio * sinTheta > 1.0;
+        float reflectProb  = schlick(cosTheta, mat.refractionIndex);
 
         vec3 scatterDir;
 
@@ -183,61 +176,48 @@ void main()
             scatterDir = refract(unitDir, normal, refractionRatio);
         }
 
-
         payload.hitColor   = vec3(1.0);
-        payload.rayOrigin  = hitPos + 0.001 * normal;
+        payload.rayOrigin  = hitPos + 0.001 * ((dot(scatterDir, normal) < 0.0) ? -normal : normal);
         payload.rayDir     = scatterDir;
         payload.isEmissive = false;
-
         return;
     }
-
 
     // 4. Lambertian & Metallic Materials
     if (mat.matType == lambertian || mat.matType == metal)
     {
-        PBRMaterial pbrMat;
+        vec3 V = normalize(-gl_WorldRayDirectionEXT);
 
+        PBRMaterial pbrMat;
         pbrMat.albedo = mat.albedo.rgb;
 
         if (mat.matType == lambertian)
         {
             pbrMat.roughness = 1.0;
-            pbrMat.metallic = 0.0;
+            pbrMat.metallic  = 0.0;
         }
         else
         {
             pbrMat.roughness = clamp(mat.fuzz, 0.05, 1.0);
-            pbrMat.metallic = 1.0;
+            pbrMat.metallic  = 1.0;
         }
-
 
         vec3 scatterDir;
         float pdf;
 
-        vec3 brdf = EvaluatePBR(
-            pbrMat,
-            normal,
-            V,
-            seed,
-            scatterDir,
-            pdf
-        );
+        vec3 brdf = EvaluatePBR(pbrMat, normal, V, seed, scatterDir, pdf);
 
-
-        if (pdf <= 0.0001)
+        if (pdf <= 1e-5 || dot(scatterDir, normal) <= 0.0)
         {
-            payload.hitColor   = vec3(0.0);
-            payload.isEmissive = true;
-            return;
+            scatterDir = normalize(normal + randomInUnitSphere(seed));
+            pdf        = max(dot(normal, scatterDir) / 3.14159265, 1e-4);
+            brdf       = mat.albedo.rgb / 3.14159265;
         }
-
 
         payload.hitColor   = (brdf * max(dot(normal, scatterDir), 0.0)) / pdf;
         payload.rayOrigin  = hitPos + 0.001 * normal;
         payload.rayDir     = scatterDir;
         payload.isEmissive = false;
-
         return;
     }
 }

@@ -122,12 +122,7 @@ struct PBRMaterial
 // ----------------------------------------------------------------------------
 
 vec3 EvaluatePBR(
-    PBRMaterial mat,
-    vec3 N,
-    vec3 V,
-    inout uint seed,
-    out vec3 scatterDir,
-    out float pdf)
+    PBRMaterial mat, vec3 N, vec3 V, inout uint seed, out vec3 scatterDir, out float pdf)
 {
     float roughness = clamp(mat.roughness, 0.05, 1.0);
 

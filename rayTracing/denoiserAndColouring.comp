@@ -1,0 +1,132 @@
+#version 460
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba16f)   writeonly uniform image2D outputImage;
+layout(set = 0, binding = 1, rgba16f)   readonly  uniform image2D inputImage; // Ping/Pong or Raw RT
+
+layout(set = 0, binding = 2) uniform sampler2D accumulationTexture;
+layout(set = 0, binding = 3, rgba16f) uniform image2D accumulationImage;
+
+layout(set = 0, binding = 4, rgba16f) readonly uniform image2D gbufferNormalImage;
+layout(set = 0, binding = 5, rgba8)   readonly uniform image2D gbufferAlbedoImage;
+layout(set = 0, binding = 6, rg16f)   readonly uniform image2D gbufferVelocityImage;
+
+layout(push_constant) uniform PushConstants 
+{
+    uint frameIndex;
+    uint missColour;
+    uint stepSize;
+} pc;
+
+void main()
+{
+    ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imageSize   = imageSize(outputImage);
+
+    if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) return;
+
+    vec2 currentUV = (vec2(pixelCoords) + 0.5) / vec2(imageSize);
+
+    // -------------------------------------------------------------
+    // STEP 1: Determine Base Input Color & Temporal Accumulation
+    // -------------------------------------------------------------
+    vec4 currentInputColor = imageLoad(inputImage, pixelCoords);
+
+    if (pc.stepSize == 1) // Pass 1: Compute Temporal Accumulation
+    {
+        vec2 velocity = imageLoad(gbufferVelocityImage, pixelCoords).xy;
+        vec2 prevUV   = currentUV - velocity;
+
+        if (pc.frameIndex > 1 && prevUV.x >= 0.0 && prevUV.x <= 1.0 && prevUV.y >= 0.0 && prevUV.y <= 1.0) 
+        {
+            vec4 prevAccum = texture(accumulationTexture, prevUV);
+            
+// Ensure frameIndex is at least 1 to avoid division by zero
+uint currentFrame = max(pc.frameIndex, 1u);
+
+// Uncapped temporal weight: Frame 1 = 100% new, Frame 100 = 1% new, Frame 1000 = 0.1% new
+float alpha = 1.0 / float(currentFrame);
+
+currentInputColor = mix(prevAccum, currentInputColor, alpha);;
+        }
+
+        // Save accumulated state for NEXT frame's temporal read
+        imageStore(accumulationImage, pixelCoords, currentInputColor);
+    }
+
+    // -------------------------------------------------------------
+    // STEP 2: Demodulate Center Albedo
+    // -------------------------------------------------------------
+    vec3 centerAlbedo   = imageLoad(gbufferAlbedoImage, pixelCoords).rgb;
+    vec4 normalAndDepth = imageLoad(gbufferNormalImage, pixelCoords);
+    vec3 centerNormal   = normalAndDepth.rgb * 2.0 - 1.0;
+    float centerDepth   = normalAndDepth.a;
+
+    // Safe division to prevent fireflies on dark albedo surfaces
+    vec3 safeAlbedo = max(centerAlbedo, vec3(0.01));
+    vec3 centerIrradiance = currentInputColor.rgb / safeAlbedo;
+
+    // -------------------------------------------------------------
+    // STEP 3: À-Trous Edge-Avoiding Bilateral Filter
+    // -------------------------------------------------------------
+    float centerLum = dot(centerIrradiance, vec3(0.2126, 0.7152, 0.0722));
+
+    vec3 filteredIrradiance = vec3(0.0);
+    float totalWeight = 0.0;
+
+    const float sigmaDepth = 0.01;
+    const float sigmaColor = 2.0; 
+
+    for (int x = -2; x <= 2; ++x)
+    {
+        for (int y = -2; y <= 2; ++y)
+        {
+            ivec2 neighborCoords = clamp(pixelCoords + ivec2(x, y) * int(pc.stepSize), ivec2(0), imageSize - ivec2(1));
+
+            // Fetch correct neighbor color depending on current pass
+           vec3 neighborColor = imageLoad(inputImage, neighborCoords).rgb;
+
+            vec3 neighborAlbedo = max(imageLoad(gbufferAlbedoImage, neighborCoords).rgb, vec3(0.01));
+            vec4 neighborNormalAndDepth = imageLoad(gbufferNormalImage, neighborCoords);
+            vec3 neighborNormal = neighborNormalAndDepth.rgb * 2.0 - 1.0;
+            float neighborDepth = neighborNormalAndDepth.a;
+
+            vec3 neighborIrradiance = neighborColor / neighborAlbedo;
+
+            // --- Bilateral Weights ---
+            float normalDot = max(0.0, dot(centerNormal, neighborNormal));
+            float wNormal  = pow(normalDot, 16.0);
+
+            float depthDiff = abs(centerDepth - neighborDepth);
+            float wDepth = exp(-depthDiff / sigmaDepth);
+
+            float neighborLum = dot(neighborIrradiance, vec3(0.2126, 0.7152, 0.0722));
+            float lumDiff = abs(centerLum - neighborLum);
+            float wColor = exp(-lumDiff / sigmaColor);
+
+            float wSpatial = exp(-float(x * x + y * y) / 2.0);
+
+            float weight = wNormal * wDepth * wColor * wSpatial;
+
+            filteredIrradiance += neighborIrradiance * weight;
+            totalWeight += weight;
+        }
+    }
+
+    if (totalWeight > 0.0)
+    {
+        filteredIrradiance /= totalWeight;
+    }
+    else
+    {
+        filteredIrradiance = centerIrradiance;
+    }
+
+    // -------------------------------------------------------------
+    // STEP 4: Re-modulate Albedo
+    // -------------------------------------------------------------
+    vec3 finalColor = filteredIrradiance * centerAlbedo;
+
+    imageStore(outputImage, pixelCoords, vec4(finalColor, 1.0));
+}

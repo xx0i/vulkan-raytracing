@@ -56,7 +56,7 @@ void main()
     vec3 p     = rayOrigin + t * rayDir;
     vec3 local = p - q.origin;
 
-    // ✅ FIX 2: Planar UV projection (handles non-orthogonal edge vectors gracefully)
+    // planar UV projection (handles non-orthogonal edge vectors gracefully)
     vec3 w  = n / areaSq;
     float u = dot(w, cross(local, q.edgeV));
     float v = dot(w, cross(q.edgeU, local));
