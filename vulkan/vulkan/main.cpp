@@ -262,13 +262,15 @@ namespace std
 	};
 }
 
-struct uniformBufferObject
+struct alignas(16) uniformBufferObject
 {
 	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
 	glm::mat4 prevView;
 	glm::mat4 prevProj;
+	glm::mat4 projUnjittered;
+	glm::mat4 prevProjUnjittered;
 };
 
 struct camera
@@ -363,6 +365,8 @@ struct pushConstants
 	uint32_t frameIndex;
 	uint32_t missColour;
 	uint32_t stepSize;
+	uint32_t isFinalPass;
+	uint32_t isTemporalPass;
 };
 
 class application
@@ -461,7 +465,6 @@ private:
 	VkDeviceMemory normalImageMemory;
 	VkImageView normalImageView;
 
-
 	VkImage albedoImage;
 	VkDeviceMemory albedoImageMemory;
 	VkImageView albedoImageView;
@@ -469,6 +472,22 @@ private:
 	VkImage velocityImage;
 	VkDeviceMemory velocityImageMemory;
 	VkImageView velocityImageView;
+
+	VkImage prevNormalImage;
+	VkDeviceMemory prevNormalImageMemory;
+	VkImageView prevNormalImageView;
+
+	VkImage momentImageA;
+	VkDeviceMemory momentImageAMemory;
+	VkImageView momentImageViewA;
+
+	VkImage momentImageB;
+	VkDeviceMemory momentImageBMemory;
+	VkImageView momentImageViewB;
+
+	VkImage prevNormalDepthImage;
+	VkDeviceMemory prevNormalDepthImageMemory;
+	VkImageView prevNormalDepthImageView;
 
 	std::vector<vertex> vertices;
 	VkBuffer vertexBuffer;
@@ -571,6 +590,12 @@ private:
 		glm::vec3(0.0f),						  // right
 	};
 
+	glm::mat4 globalPrevView{1.0f};
+	glm::mat4 globalPrevProj{1.0f};
+	glm::mat4 globalPrevProjUnjittered{1.0f};
+	bool historyInitialized = false;
+
+
 	float timestampPeriod;
 	double lastMouseX = 0.0;
 	double lastMouseY = 0.0;
@@ -581,6 +606,9 @@ private:
 	bool right;
 	bool up;
 	bool down;
+	bool mouseMoved;
+	float accumulatedDeltaX = 0.0f;
+    float accumulatedDeltaY = 0.0f;
 
 	bool frameBufferResized = false;
 
@@ -589,6 +617,10 @@ private:
 	uint32_t frameCounter;
 	uint32_t missShaderColouring;
 	uint32_t currentStepSize;
+	uint32_t totalFrameCount = 0;
+
+	std::vector<glm::mat4> prevViewMatrices;
+	std::vector<glm::mat4> prevProjMatrices;
 
 	void windowInitalization()
 	{
@@ -615,23 +647,20 @@ private:
 
 	void handleMouseCallback(double xpos, double ypos)
 	{
-		static float deltaX = 0.0f;
-		static float deltaY = 0.0f;
-
 		if (firstMouse)
 		{
 			lastMouseX = xpos;
 			lastMouseY = ypos;
 			firstMouse = false;
+			return; // Return immediately on initial focus!
 		}
 
-		deltaX = xpos - lastMouseX;
-		deltaY = lastMouseY - ypos;
+		// Accumulate movement deltas across GLFW callback events
+		accumulatedDeltaX += static_cast<float>(xpos - lastMouseX);
+		accumulatedDeltaY += static_cast<float>(lastMouseY - ypos);
 
 		lastMouseX = xpos;
 		lastMouseY = ypos;
-
-		processMouse(deltaX, deltaY);
 	}
 
 	void vulkanInitalization()
@@ -680,6 +709,14 @@ private:
 		createNormalImageView();
 		createAlbedoImage();
 		createAlbedoImageView();
+		createVelocityImage();
+		createVelocityImageView();
+		createMomentImageA();
+		createMomentImageViewA();
+		createMomentImageB();
+		createMomentImageViewB();
+		createPrevNormalImage();
+		createPrevNormalImageView();
 		loadModel();
 		//simpleDraw();
 		drawShapes();
@@ -803,6 +840,18 @@ private:
 		vkDestroyImageView(device, velocityImageView, nullptr);
 		vkDestroyImage(device, velocityImage, nullptr);
 		vkFreeMemory(device, velocityImageMemory, nullptr);
+
+		vkDestroyImageView(device, momentImageViewA, nullptr);
+		vkDestroyImage(device, momentImageA, nullptr);
+		vkFreeMemory(device, momentImageAMemory, nullptr);
+
+		vkDestroyImageView(device, momentImageViewB, nullptr);
+		vkDestroyImage(device, momentImageB, nullptr);
+		vkFreeMemory(device, momentImageBMemory, nullptr);
+
+		vkDestroyImageView(device, prevNormalImageView, nullptr);
+		vkDestroyImage(device, prevNormalImage, nullptr);
+		vkFreeMemory(device, prevNormalImageMemory, nullptr);
 
 		for (auto imageView : swapChainImageViews)
 			vkDestroyImageView(device, imageView, nullptr);
@@ -973,6 +1022,18 @@ private:
 
 		createAccumulationImageB();
 		createAccumulationImageViewA();
+
+		createNormalImage();
+		createNormalImageView();
+
+		createAlbedoImage();
+		createAlbedoImageView();
+
+		createVelocityImage();
+		createVelocityImageView();
+
+		createPrevNormalImage();
+		createPrevNormalImageView();
 
 		VkClearColorValue clearColor = { { 0.0f, 0.0f, 0.0f, 0.0f } };
 
@@ -1648,8 +1709,28 @@ private:
 		gbufferVelocityBinding.descriptorCount = 1;
 		gbufferVelocityBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 7> bindings = {
-			outputImageBinding, inputImageBinding, accumulationSamplerBinding, accumulationStorageBinding, gbufferNormalBinding, gbufferAlbedoBinding, gbufferVelocityBinding
+		VkDescriptorSetLayoutBinding prevNormalDepthBinding{};
+		prevNormalDepthBinding.binding = 7;
+		prevNormalDepthBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		prevNormalDepthBinding.descriptorCount = 1;
+		prevNormalDepthBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		VkDescriptorSetLayoutBinding prevMomentsSamplerBinding{};
+		prevMomentsSamplerBinding.binding = 8;
+		prevMomentsSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		prevMomentsSamplerBinding.descriptorCount = 1;
+		prevMomentsSamplerBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		VkDescriptorSetLayoutBinding momentsStorageBinding{};
+		momentsStorageBinding.binding = 9;
+		momentsStorageBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		momentsStorageBinding.descriptorCount = 1;
+		momentsStorageBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 10> bindings = {
+			outputImageBinding, inputImageBinding, accumulationSamplerBinding, accumulationStorageBinding,
+			gbufferNormalBinding, gbufferAlbedoBinding, gbufferVelocityBinding, prevNormalDepthBinding,
+			prevMomentsSamplerBinding, momentsStorageBinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1814,6 +1895,7 @@ private:
 	{
 		auto rayGenShaderCode = readFile("rayTracing/rgen.spv");
 		auto missShaderCode = readFile("rayTracing/rmiss.spv");
+		auto shadowMissShaderCode = readFile("rayTracing/shadowrmiss.spv");
 		auto closesthitShaderCode = readFile("rayTracing/rchit.spv");
 		auto quadClosesthitShaderCode = readFile("rayTracing/quadrchit.spv");
 		auto sphereClosesthitShaderCode = readFile("rayTracing/sphererchit.spv");
@@ -1824,6 +1906,7 @@ private:
 
 		VkShaderModule rayGenShaderModule = createShaderModule(rayGenShaderCode);
 		VkShaderModule missShaderModule = createShaderModule(missShaderCode);
+		VkShaderModule shadowMissShaderModule = createShaderModule(shadowMissShaderCode);
 		VkShaderModule closesthitShaderModule = createShaderModule(closesthitShaderCode);
 		VkShaderModule quadClosesthitShaderModule = createShaderModule(quadClosesthitShaderCode);
 		VkShaderModule sphereClosesthitShaderModule = createShaderModule(sphereClosesthitShaderCode);
@@ -1843,6 +1926,13 @@ private:
 		missShaderStageInfo.stage = VK_SHADER_STAGE_MISS_BIT_KHR;
 		missShaderStageInfo.module = missShaderModule;
 		missShaderStageInfo.pName = "main";
+
+		// NEW
+		VkPipelineShaderStageCreateInfo shadowMissShaderStageInfo{};
+		shadowMissShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		shadowMissShaderStageInfo.stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+		shadowMissShaderStageInfo.module = shadowMissShaderModule;
+		shadowMissShaderStageInfo.pName = "main";
 
 		VkPipelineShaderStageCreateInfo closesthitShaderStageInfo{};
 		closesthitShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1886,7 +1976,7 @@ private:
 		sphereIntersectionShaderStageInfo.module = sphereIntersectionShaderModule;
 		sphereIntersectionShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, closesthitShaderStageInfo,
+		VkPipelineShaderStageCreateInfo shaderStages[] = { rayGenShaderStageInfo, missShaderStageInfo, shadowMissShaderStageInfo, closesthitShaderStageInfo,
 															quadClosesthitShaderStageInfo, sphereClosesthitShaderStageInfo,	anyhitShaderStageInfo,
 															intersectionShaderStageInfo, quadIntersectionShaderStageInfo, sphereIntersectionShaderStageInfo };
 
@@ -1906,32 +1996,40 @@ private:
 		missStage.anyHitShader = VK_SHADER_UNUSED_KHR;
 		missStage.intersectionShader = VK_SHADER_UNUSED_KHR;
 
+		VkRayTracingShaderGroupCreateInfoKHR shadowMissStage{};
+		shadowMissStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+		shadowMissStage.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+		shadowMissStage.generalShader = 2;   // index into shaderStages, NOT shaderGroups
+		shadowMissStage.closestHitShader = VK_SHADER_UNUSED_KHR;
+		shadowMissStage.anyHitShader = VK_SHADER_UNUSED_KHR;
+		shadowMissStage.intersectionShader = VK_SHADER_UNUSED_KHR;
+
 		VkRayTracingShaderGroupCreateInfoKHR hitStages{};
 		hitStages.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 		hitStages.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
 		hitStages.generalShader = VK_SHADER_UNUSED_KHR;
-		hitStages.closestHitShader = 2;
-		hitStages.anyHitShader = 5;
-		hitStages.intersectionShader = 6;
+		hitStages.closestHitShader = 3;  
+		hitStages.anyHitShader = 6;      
+		hitStages.intersectionShader = 7;
 
 		VkRayTracingShaderGroupCreateInfoKHR quadHitStage{};
 		quadHitStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 		quadHitStage.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
 		quadHitStage.generalShader = VK_SHADER_UNUSED_KHR;
-		quadHitStage.closestHitShader = 3;
-		quadHitStage.anyHitShader = 5;
-		quadHitStage.intersectionShader = 7;
+		quadHitStage.closestHitShader = 4;  
+		quadHitStage.anyHitShader = 6;      
+		quadHitStage.intersectionShader = 8;
 
 		VkRayTracingShaderGroupCreateInfoKHR sphereHitStage{};
 		sphereHitStage.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 		sphereHitStage.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
 		sphereHitStage.generalShader = VK_SHADER_UNUSED_KHR;
-		sphereHitStage.closestHitShader = 4;
-		sphereHitStage.anyHitShader = 5;
-		sphereHitStage.intersectionShader = 8;
+		sphereHitStage.closestHitShader = 5;  
+		sphereHitStage.anyHitShader = 6;      
+		sphereHitStage.intersectionShader = 9;
 
-		VkRayTracingShaderGroupCreateInfoKHR shaderGroups[] = { rayGenStage, missStage, hitStages, quadHitStage, sphereHitStage };
-
+		// Group order must match createShaderBindingTables(): 0=raygen, 1=miss, 2=shadowmiss, 3=hit, 4=quadhit, 5=spherehit
+		VkRayTracingShaderGroupCreateInfoKHR shaderGroups[] = { rayGenStage, missStage, shadowMissStage, hitStages, quadHitStage, sphereHitStage };
 
 		std::array<VkDescriptorSetLayout, 2> layouts = { rayTracingDescriptorSetLayout, alphaDescriptorSetLayout };
 
@@ -1958,13 +2056,14 @@ private:
 		pipelineInfo.pStages = shaderStages;
 		pipelineInfo.groupCount = static_cast<uint32_t>(std::size(shaderGroups));
 		pipelineInfo.pGroups = shaderGroups;
-		pipelineInfo.maxPipelineRayRecursionDepth = 1;
+		pipelineInfo.maxPipelineRayRecursionDepth = 2; 
 		pipelineInfo.layout = rayTracingPipelineLayout;
 
 		CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &rayTracingPipeline);
 
 		vkDestroyShaderModule(device, rayGenShaderModule, nullptr);
 		vkDestroyShaderModule(device, missShaderModule, nullptr);
+		vkDestroyShaderModule(device, shadowMissShaderModule, nullptr);
 		vkDestroyShaderModule(device, closesthitShaderModule, nullptr);
 		vkDestroyShaderModule(device, quadClosesthitShaderModule, nullptr);
 		vkDestroyShaderModule(device, sphereClosesthitShaderModule, nullptr);
@@ -2071,45 +2170,39 @@ private:
 		VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingProperties{};
 		rayTracingProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
 		VkPhysicalDeviceProperties2 deviceProperties2{};
-
 		deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		deviceProperties2.pNext = &rayTracingProperties;
-
 		vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProperties2);
-
 		uint32_t handleSize = rayTracingProperties.shaderGroupHandleSize;
 		uint32_t handleAlignment = (handleSize + rayTracingProperties.shaderGroupBaseAlignment - 1) & ~(rayTracingProperties.shaderGroupBaseAlignment - 1);
-		uint32_t groupCount = 5;
+
+		uint32_t groupCount = 6; // was 5 — raygen(1) + miss(2) + hit(3)
+
 		uint32_t sbtSize = groupCount * handleAlignment;
-
 		std::vector<uint8_t> shaderHandleStorage(sbtSize);
-
 		GetRayTracingShaderGroupHandlesKHR(device, rayTracingPipeline, 0, groupCount, sbtSize, shaderHandleStorage.data());
-
 		createBuffer(sbtSize, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			shaderBindingTableBuffer, shaderBindingTableBufferMemory);
-
 		void* data;
 		vkMapMemory(device, shaderBindingTableBufferMemory, 0, sbtSize, 0, &data);
-
 		for (uint32_t i = 0; i < groupCount; i++)
 		{
 			memcpy((char*)data + i * handleAlignment, shaderHandleStorage.data() + i * handleSize, handleSize);
 		}
-
 		vkUnmapMemory(device, shaderBindingTableBufferMemory);
-
 		shaderBindingTableAddress = findBufferDeviceAddress(device, shaderBindingTableBuffer);
 
 		raygenRegion.deviceAddress = shaderBindingTableAddress + 0 * handleAlignment;
 		raygenRegion.stride = handleAlignment;
 		raygenRegion.size = handleAlignment;
 
+		// Now covers TWO miss shaders: index 1 = primary miss, index 2 = shadow miss
 		missRegion.deviceAddress = shaderBindingTableAddress + 1 * handleAlignment;
 		missRegion.stride = handleAlignment;
-		missRegion.size = handleAlignment;
+		missRegion.size = 2 * handleAlignment;   // was 1 * handleAlignment
 
-		hitRegion.deviceAddress = shaderBindingTableAddress + 2 * handleAlignment;
+		// Hit groups shift from index 2 to index 3
+		hitRegion.deviceAddress = shaderBindingTableAddress + 3 * handleAlignment;   // was 2 *
 		hitRegion.stride = handleAlignment;
 		hitRegion.size = 3 * handleAlignment;
 
@@ -2384,8 +2477,10 @@ private:
 
 	void createNormalImage()
 	{
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, normalImage, normalImageMemory);
+		createImage(
+			swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, normalImage, normalImageMemory
+		);
 
 		transitionImageLayout(normalImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
@@ -2404,6 +2499,30 @@ private:
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, velocityImage, velocityImageMemory);
 
 		transitionImageLayout(velocityImage, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createMomentImageA()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, momentImageA, momentImageAMemory);
+
+		transitionImageLayout(momentImageA, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createMomentImageB()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, momentImageB, momentImageBMemory);
+
+		transitionImageLayout(momentImageB, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+	}
+
+	void createPrevNormalImage()
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, prevNormalImage, prevNormalImageMemory);
+
+		transitionImageLayout(prevNormalImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
 	}
 
 	void createTextureImageView()
@@ -2454,6 +2573,21 @@ private:
 	void createVelocityImageView()
 	{
 		velocityImageView = createImageView(velocityImage, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createPrevNormalImageView()
+	{
+		prevNormalImageView = createImageView(prevNormalImage, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createMomentImageViewA()
+	{
+		momentImageViewA = createImageView(momentImageA, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
+	void createMomentImageViewB()
+	{
+		momentImageViewB = createImageView(momentImageB, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 	}
 
 	void createTextureSampler()
@@ -2518,8 +2652,8 @@ private:
 	{
 		VkSamplerCreateInfo samplerInfo{};
 		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-		samplerInfo.magFilter = VK_FILTER_LINEAR; // Bilinear filtering
-		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		samplerInfo.magFilter = VK_FILTER_NEAREST;
+		samplerInfo.minFilter = VK_FILTER_NEAREST;
 		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; // Don't wrap screen edges
 		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -2683,6 +2817,13 @@ private:
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 			sourceStage = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
 			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_GENERAL)
+		{
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 		}
 		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
 		{
@@ -3148,7 +3289,7 @@ private:
 				{{0.65f, 0.05f, 0.05f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
 				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
 				{{0.73f, 0.73f, 0.73f, 1.0f}, 0.0f, 0.0f, materialType::lambertian},
-				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f},
+				{{1.0f, 1.0f, 1.0f, 1.0f}, 0.0f, 0.0f, materialType::diffuseLight, 0, {1.0f, 1.0f, 1.0f, 4.0f}, 0.0f},
 			};
 
 			// --- insert this immediately after the materials = { ... }; block in case 12 ---
@@ -4056,6 +4197,8 @@ private:
 		uniformBuffers.resize(maxFramesInFlight);
 		uniformBuffersMemory.resize(maxFramesInFlight);
 		uniformBuffersMapped.resize(maxFramesInFlight);
+		prevViewMatrices.resize(maxFramesInFlight);
+		prevProjMatrices.resize(maxFramesInFlight);
 
 		for (size_t i = 0; i < maxFramesInFlight; i++)
 		{
@@ -4126,19 +4269,19 @@ private:
 	{
 		std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
-		// Storage Images: Output, Input, Accumulation Write, Normal, Albedo, Velocity
+		// 7 Storage Images per set * 12 sets = 84 total
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 6 * 2);
+		poolSizes[0].descriptorCount = 7 * 12;
 
-		// Combined Image Samplers: Accumulation Read
+		// 3 Combined Image Samplers per set * 12 sets = 36 total
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[1].descriptorCount = static_cast<uint32_t>(maxFramesInFlight * 1 * 2);
+		poolSizes[1].descriptorCount = 3 * 12;
 
 		VkDescriptorPoolCreateInfo descriptorPoolInfo{};
 		descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		descriptorPoolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		descriptorPoolInfo.pPoolSizes = poolSizes.data();
-		descriptorPoolInfo.maxSets = static_cast<uint32_t>(maxFramesInFlight * 2);
+		descriptorPoolInfo.maxSets = 12; // 6 passes * 2 temporal frames
 
 		if (vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &computeDescriptorPool) != VK_SUCCESS)
 		{
@@ -4502,8 +4645,10 @@ private:
 
 	void createComputeDescriptorSets()
 	{
-		uint32_t totalSets = static_cast<uint32_t>(maxFramesInFlight) * 2;
+		uint32_t totalSets = 12;
+
 		std::vector<VkDescriptorSetLayout> layouts(totalSets, computeDescriptorSetLayout);
+
 		VkDescriptorSetAllocateInfo descriptorSetInfo{};
 		descriptorSetInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		descriptorSetInfo.descriptorPool = computeDescriptorPool;
@@ -4511,107 +4656,89 @@ private:
 		descriptorSetInfo.pSetLayouts = layouts.data();
 
 		computeDescriptorSets.resize(totalSets);
+
 		if (vkAllocateDescriptorSets(device, &descriptorSetInfo, computeDescriptorSets.data()) != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to allocate compute descriptor sets");
 		}
 
-		for (size_t i = 0; i < maxFramesInFlight; i++)
+		// Persistent G-Buffer Descriptor Infos
+		VkDescriptorImageInfo normalImageInfo{ VK_NULL_HANDLE, normalImageView, VK_IMAGE_LAYOUT_GENERAL };
+		VkDescriptorImageInfo albedoImageInfo{ VK_NULL_HANDLE, albedoImageView, VK_IMAGE_LAYOUT_GENERAL };
+		VkDescriptorImageInfo velocityImageInfo{ VK_NULL_HANDLE, velocityImageView, VK_IMAGE_LAYOUT_GENERAL };
+		VkDescriptorImageInfo prevNormalInfo{ historySampler, prevNormalImageView, VK_IMAGE_LAYOUT_GENERAL };
+
+		// Persistent Ping-Pong Image Infos (Prevents stack dangling pointers)
+		VkDescriptorImageInfo storeInputInfo{ VK_NULL_HANDLE, storeImageView, VK_IMAGE_LAYOUT_GENERAL };
+		VkDescriptorImageInfo computeAInfo{ VK_NULL_HANDLE, computeImageViewA, VK_IMAGE_LAYOUT_GENERAL };
+		VkDescriptorImageInfo computeBInfo{ VK_NULL_HANDLE, computeImageViewB, VK_IMAGE_LAYOUT_GENERAL };
+
+		auto createWrite = [](VkDescriptorSet dstSet, uint32_t binding, VkDescriptorType type, const VkDescriptorImageInfo* imageInfo)
+			{
+				VkWriteDescriptorSet write{};
+				write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				write.dstSet = dstSet;
+				write.dstBinding = binding;
+				write.dstArrayElement = 0;
+				write.descriptorCount = 1;
+				write.descriptorType = type;
+				write.pImageInfo = imageInfo;
+				return write;
+			};
+
+		for (uint32_t temporalParity = 0; temporalParity < 2; temporalParity++)
 		{
-			size_t pingIndex = i * 2;
-			size_t pongIndex = i * 2 + 1;
+			VkImageView readHistoryView = (temporalParity == 0) ? accumulationImageViewA : accumulationImageViewB;
+			VkImageView writeHistoryView = (temporalParity == 0) ? accumulationImageViewB : accumulationImageViewA;
 
-			// ==========================================
-			// TEMPORAL HISTORY PING-PONG ACROSS FRAMES
-			// ==========================================
-			// Frame 0: Read history from A, write history to B
-			// Frame 1: Read history from B, write history to A
-			VkImageView readHistoryView = (i % 2 == 0) ? accumulationImageViewA : accumulationImageViewB;
-			VkImageView writeHistoryView = (i % 2 == 0) ? accumulationImageViewB : accumulationImageViewA;
+			VkImageView readMomentView = (temporalParity == 0) ? momentImageViewA : momentImageViewB;
+			VkImageView writeMomentView = (temporalParity == 0) ? momentImageViewB : momentImageViewA;
 
+			// Persistently allocated per-parity image infos
 			VkDescriptorImageInfo accumSamplerInfo{ historySampler, readHistoryView, VK_IMAGE_LAYOUT_GENERAL };
 			VkDescriptorImageInfo accumStorageInfo{ VK_NULL_HANDLE, writeHistoryView, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo momentSamplerInfo{ historySampler, readMomentView, VK_IMAGE_LAYOUT_GENERAL };
+			VkDescriptorImageInfo momentStorageInfo{ VK_NULL_HANDLE, writeMomentView, VK_IMAGE_LAYOUT_GENERAL };
 
-			// Shared G-Buffer descriptors
-			VkDescriptorImageInfo normalImageInfo{ VK_NULL_HANDLE, normalImageView, VK_IMAGE_LAYOUT_GENERAL };
-			VkDescriptorImageInfo albedoImageInfo{ VK_NULL_HANDLE, albedoImageView, VK_IMAGE_LAYOUT_GENERAL };
-			VkDescriptorImageInfo velocityImageInfo{ VK_NULL_HANDLE, velocityImageView, VK_IMAGE_LAYOUT_GENERAL };
+			uint32_t baseSetIndex = temporalParity * 6;
 
-			// ==========================================
-			// 1. PING SET (Pass 0: Reads storeImageView -> Writes computeImageViewA)
-			// ==========================================
-			VkDescriptorImageInfo pingOutputInfo{ VK_NULL_HANDLE, computeImageViewA, VK_IMAGE_LAYOUT_GENERAL };
-			VkDescriptorImageInfo pingInputInfo{ VK_NULL_HANDLE, storeImageView, VK_IMAGE_LAYOUT_GENERAL };
-
-			std::array<VkWriteDescriptorSet, 7> pingWrites{};
-
-			pingWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[0].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[0].dstBinding = 0; // Output
-			pingWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			pingWrites[0].descriptorCount = 1;
-			pingWrites[0].pImageInfo = &pingOutputInfo;
-
-			pingWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[1].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[1].dstBinding = 1; // Input
-			pingWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			pingWrites[1].descriptorCount = 1;
-			pingWrites[1].pImageInfo = &pingInputInfo;
-
-			pingWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[2].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[2].dstBinding = 2; // Sampler (Read History)
-			pingWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			pingWrites[2].descriptorCount = 1;
-			pingWrites[2].pImageInfo = &accumSamplerInfo;
-
-			pingWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[3].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[3].dstBinding = 3; // Storage Image (Write History)
-			pingWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			pingWrites[3].descriptorCount = 1;
-			pingWrites[3].pImageInfo = &accumStorageInfo;
-
-			pingWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[4].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[4].dstBinding = 4;
-			pingWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			pingWrites[4].descriptorCount = 1;
-			pingWrites[4].pImageInfo = &normalImageInfo;
-
-			pingWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[5].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[5].dstBinding = 5;
-			pingWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			pingWrites[5].descriptorCount = 1;
-			pingWrites[5].pImageInfo = &albedoImageInfo;
-
-			pingWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			pingWrites[6].dstSet = computeDescriptorSets[pingIndex];
-			pingWrites[6].dstBinding = 6;
-			pingWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			pingWrites[6].descriptorCount = 1;
-			pingWrites[6].pImageInfo = &velocityImageInfo;
-
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(pingWrites.size()), pingWrites.data(), 0, nullptr);
-
-			// ==========================================
-			// 2. PONG SET (Pass 1: Reads computeImageViewA -> Writes computeImageViewB)
-			// ==========================================
-			VkDescriptorImageInfo pongOutputInfo{ VK_NULL_HANDLE, computeImageViewB, VK_IMAGE_LAYOUT_GENERAL };
-			VkDescriptorImageInfo pongInputInfo{ VK_NULL_HANDLE, computeImageViewA, VK_IMAGE_LAYOUT_GENERAL };
-
-			std::array<VkWriteDescriptorSet, 7> pongWrites = pingWrites;
-
-			for (auto& write : pongWrites)
+			for (uint32_t pass = 0; pass < 6; pass++)
 			{
-				write.dstSet = computeDescriptorSets[pongIndex];
-			}
-			pongWrites[0].pImageInfo = &pongOutputInfo;
-			pongWrites[1].pImageInfo = &pongInputInfo;
+				VkDescriptorSet currentSet = computeDescriptorSets[baseSetIndex + pass];
 
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(pongWrites.size()), pongWrites.data(), 0, nullptr);
+				const VkDescriptorImageInfo* inputInfo = nullptr;
+				const VkDescriptorImageInfo* outputInfo = nullptr;
+
+				if (pass == 0)
+				{
+					// Temporal Pass: Read Raw RT (storeImage) -> Write ComputeA
+					inputInfo = &storeInputInfo;
+					outputInfo = &computeAInfo;
+				}
+				else
+				{
+					// Spatial Passes: Ping-Pong between A and B
+					// Pass 1: Read A -> Write B
+					// Pass 2: Read B -> Write A
+					// Pass 3: Read A -> Write B ...
+					inputInfo = (pass % 2 == 1) ? &computeAInfo : &computeBInfo;
+					outputInfo = (pass % 2 == 1) ? &computeBInfo : &computeAInfo;
+				}
+
+				std::array<VkWriteDescriptorSet, 10> writes{};
+				writes[0] = createWrite(currentSet, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, outputInfo);
+				writes[1] = createWrite(currentSet, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, inputInfo);
+				writes[2] = createWrite(currentSet, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &accumSamplerInfo);
+				writes[3] = createWrite(currentSet, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &accumStorageInfo);
+				writes[4] = createWrite(currentSet, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &normalImageInfo);
+				writes[5] = createWrite(currentSet, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &albedoImageInfo);
+				writes[6] = createWrite(currentSet, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &velocityImageInfo);
+				writes[7] = createWrite(currentSet, 7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &prevNormalInfo);
+				writes[8] = createWrite(currentSet, 8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &momentSamplerInfo);
+				writes[9] = createWrite(currentSet, 9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &momentStorageInfo);
+
+				vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+			}
 		}
 	}
 
@@ -4808,7 +4935,7 @@ private:
 		}
 	}
 
-	void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+	void recordRayTracingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex, uint32_t progressiveFrameCount, uint32_t globalFrameCount)
 	{
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -4850,7 +4977,7 @@ private:
 			descriptorSetsToBind.data(), 0, nullptr
 		);
 
-		pushConstants pcData = { frameCounter, missShaderColouring, currentStepSize };
+		pushConstants pcData = { progressiveFrameCount, missShaderColouring, 1, 0 };
 		vkCmdPushConstants(
 			commandBuffer,
 			rayTracingPipelineLayout,
@@ -4868,14 +4995,14 @@ private:
 
 		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 1);
 
-		// Barrier: Ray Tracing output -> Compute Shader input
-		std::array<VkImageMemoryBarrier, 3> rtBarriers{};
+		// Barrier: Ray Tracing outputs -> Transfer Copy & Compute Shader inputs
+		std::array<VkImageMemoryBarrier, 4> rtBarriers{};
 
 		rtBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		rtBarriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
 		rtBarriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
 		rtBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-		rtBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		rtBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
 		rtBarriers[0].image = storeImage;
 		rtBarriers[0].subresourceRange = range;
 
@@ -4885,41 +5012,156 @@ private:
 		rtBarriers[2] = rtBarriers[0];
 		rtBarriers[2].image = albedoImage;
 
+		rtBarriers[3] = rtBarriers[0];
+		rtBarriers[3].image = velocityImage;
+
 		vkCmdPipelineBarrier(
 			commandBuffer,
 			VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
 			0, 0, nullptr, 0, nullptr,
 			static_cast<uint32_t>(rtBarriers.size()), rtBarriers.data()
 		);
 
 		// =========================================================================
-		// 2. DENOISING COMPUTE PASSES (3-Pass Wavelet Filter Ping-Pong)
+		// COPY G-BUFFER TO PREVIOUS FRAME IMAGE (For Temporal Disocclusion)
+		// =========================================================================
+		VkImageCopy copyRegion{};
+		copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+		copyRegion.srcOffset = { 0, 0, 0 };
+		copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+		copyRegion.dstOffset = { 0, 0, 0 };
+		copyRegion.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
+
+		transitionImageLayoutInCommandBuffer(
+			commandBuffer, normalImage,
+			VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			range
+		);
+		transitionImageLayoutInCommandBuffer(
+			commandBuffer, prevNormalImage,
+			VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			range
+		);
+
+		vkCmdCopyImage(
+			commandBuffer,
+			normalImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			prevNormalImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &copyRegion
+		);
+
+		transitionImageLayoutInCommandBuffer(
+			commandBuffer, normalImage,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+			range
+		);
+		transitionImageLayoutInCommandBuffer(
+			commandBuffer, prevNormalImage,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+			range
+		);
+
+		// =========================================================================
+		// 2. DENOISING COMPUTE PASSES
+		//    Temporal + À-Trous 1,2,4,8,16
 		// =========================================================================
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
 
-		uint32_t stepSizes[] = { 1, 2, 4 };
+		uint32_t stepSizes[] = { 0, 1, 2, 4, 8, 16 };
+
 		uint32_t groupCountX = (swapChainExtent.width + 15) / 16;
 		uint32_t groupCountY = (swapChainExtent.height + 15) / 16;
 
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 2);
+		const uint32_t totalPasses = 6;
 
-		for (uint32_t i = 0; i < 3; ++i)
+		uint32_t temporalParity = globalFrameCount % 2;
+		uint32_t baseSetIndex = temporalParity * totalPasses;
+
+		vkCmdWriteTimestamp(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			timeStampQueryPools[currentFrame],
+			2
+		);
+
+		VkImage readAccumImage =
+			(temporalParity == 0) ? accumulationImageA : accumulationImageB;
+
+		VkImage writeAccumImage =
+			(temporalParity == 0) ? accumulationImageB : accumulationImageA;
+
+		VkImage readMomentImage =
+			(temporalParity == 0) ? momentImageA : momentImageB;
+
+		VkImage writeMomentImage =
+			(temporalParity == 0) ? momentImageB : momentImageA;
+
+		// ---------------------------------------------------------
+		// Initial image state for accumulation/moments and
+		// ping-pong filter images.
+		// ---------------------------------------------------------
+		std::array<VkImageMemoryBarrier, 4> preComputeBarriers{};
+
+		preComputeBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		preComputeBarriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+		preComputeBarriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		preComputeBarriers[0].srcAccessMask =
+			VK_ACCESS_TRANSFER_READ_BIT |
+			VK_ACCESS_SHADER_READ_BIT |
+			VK_ACCESS_SHADER_WRITE_BIT;
+		preComputeBarriers[0].dstAccessMask =
+			VK_ACCESS_SHADER_READ_BIT |
+			VK_ACCESS_SHADER_WRITE_BIT;
+		preComputeBarriers[0].srcQueueFamilyIndex =
+			VK_QUEUE_FAMILY_IGNORED;
+		preComputeBarriers[0].dstQueueFamilyIndex =
+			VK_QUEUE_FAMILY_IGNORED;
+		preComputeBarriers[0].image = readAccumImage;
+		preComputeBarriers[0].subresourceRange =
+			range;
+
+		preComputeBarriers[1] = preComputeBarriers[0];
+		preComputeBarriers[1].image = readMomentImage;
+
+		preComputeBarriers[2] = preComputeBarriers[0];
+		preComputeBarriers[2].image = computeImageA;
+
+		preComputeBarriers[3] = preComputeBarriers[0];
+		preComputeBarriers[3].image = computeImageB;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT |
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 0, nullptr,
+			0, nullptr,
+			static_cast<uint32_t>(preComputeBarriers.size()),
+			preComputeBarriers.data()
+		);
+
+		for (uint32_t i = 0; i < totalPasses; ++i)
 		{
-			// Update step size push constant
-			pushConstants computePc = { frameCounter, missShaderColouring, stepSizes[i] };
+			bool isTemporalPass = (i == 0);
+			bool isLastPass = (i == totalPasses - 1);
+
+			pushConstants computePc = {
+				progressiveFrameCount,
+				missShaderColouring,
+				stepSizes[i],
+				isLastPass ? 1u : 0u,
+				isTemporalPass ? 1u : 0u
+			};
+
 			vkCmdPushConstants(
 				commandBuffer,
 				computePipelineLayout,
-				VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+				VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
 				0, sizeof(pushConstants), &computePc
 			);
 
-			// Ping-Pong Descriptor Binding:
-			// i = 0: Ping Set (Reads storeImage -> Writes computeImageA)
-			// i = 1: Pong Set (Reads computeImageA -> Writes computeImageB)
-			// i = 2: Ping Set (Reads computeImageB -> Writes computeImageA)
-			uint32_t activeSetIndex = (currentFrame * 2) + (i % 2);
+			uint32_t activeSetIndex = baseSetIndex + i;
 
 			vkCmdBindDescriptorSets(
 				commandBuffer,
@@ -4932,43 +5174,96 @@ private:
 
 			vkCmdDispatch(commandBuffer, groupCountX, groupCountY, 1);
 
-			// Barrier between passes so writes complete before the next pass reads
-			if (i < 2)
-			{
-				VkImageMemoryBarrier passBarrier{};
-				passBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-				passBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-				passBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-				passBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-				passBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-				passBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-				passBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			// ---------------------------------------------------------
+			// Ping-pong Ping/Pong target verification:
+			// Pass 0 (Temporal) : Writes computeImageA
+			// Pass 1 (Step 1)   : Reads A -> Writes B
+			// Pass 2 (Step 2)   : Reads B -> Writes A
+			// Pass 3 (Step 4)   : Reads A -> Writes B
+			// Pass 4 (Step 8)   : Reads B -> Writes A
+			// Pass 5 (Step 16)  : Reads A -> Writes B
+			// ---------------------------------------------------------
+			VkImage passOutputImage = (i % 2 == 0) ? computeImageA : computeImageB;
+			VkImage passInputImage = (i % 2 == 0) ? computeImageB : computeImageA;
 
-				// If i == 0, we just wrote to computeImageA.
-				// If i == 1, we just wrote to computeImageB.
-				passBarrier.image = (i % 2 == 0) ? computeImageA : computeImageB;
-				passBarrier.subresourceRange = range;
+			if (isTemporalPass)
+			{
+				std::array<VkImageMemoryBarrier, 3> temporalBarriers{};
+
+				temporalBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				temporalBarriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+				temporalBarriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+				temporalBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+				temporalBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+				temporalBarriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				temporalBarriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				temporalBarriers[0].subresourceRange = range;
+
+				temporalBarriers[0].image = writeAccumImage;
+				temporalBarriers[1] = temporalBarriers[0];
+				temporalBarriers[1].image = writeMomentImage;
+				temporalBarriers[2] = temporalBarriers[0];
+				temporalBarriers[2].image = computeImageA; // Force Pass 0 output sync
 
 				vkCmdPipelineBarrier(
 					commandBuffer,
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 					0, 0, nullptr, 0, nullptr,
+					static_cast<uint32_t>(temporalBarriers.size()),
+					temporalBarriers.data()
+				);
+			}
+			else
+			{
+				// Barrier between ping-pong passes
+				VkImageMemoryBarrier passBarrier{};
+				passBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+				passBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+				passBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+				passBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+				passBarrier.dstAccessMask = isLastPass ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_READ_BIT;
+				passBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				passBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				passBarrier.image = passOutputImage;
+				passBarrier.subresourceRange = range;
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					isLastPass ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					0, 0, nullptr, 0, nullptr,
 					1, &passBarrier
 				);
 			}
 		}
 
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 3);
+		vkCmdWriteTimestamp(
+			commandBuffer,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			timeStampQueryPools[currentFrame],
+			3
+		);
 
 		// =========================================================================
-        // 3. BLIT FINAL FILTERED RESULT TO SWAPCHAIN
-        // =========================================================================
-        // Pass 3 (i = 2) wrote to computeImageA, so computeImageA contains the final result.
-		VkImage finalOutputImage = computeImageA;
+		// 3. BLIT FINAL FILTERED RESULT TO SWAPCHAIN
+		// =========================================================================
+
+		// Six-pass chain ends on computeImageB:
+		//
+		// Temporal  -> A
+		// À-Trous 1 -> B
+		// À-Trous 2 -> A
+		// À-Trous 4 -> B
+		// À-Trous 8 -> A
+		// À-Trous 16 -> B
+		//
+		VkImage finalOutputImage =
+			computeImageB;
 
 		transitionImageLayoutInCommandBuffer(
-			commandBuffer, finalOutputImage,
+			commandBuffer,
+			finalOutputImage,
 			VK_IMAGE_LAYOUT_GENERAL,
 			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 			range
@@ -4976,73 +5271,146 @@ private:
 
 		VkImageBlit blitRegion{};
 
-		// Source subresource and region bounds (computeImageA - 16F)
-		blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		blitRegion.srcSubresource.mipLevel = 0;
-		blitRegion.srcSubresource.baseArrayLayer = 0;
-		blitRegion.srcSubresource.layerCount = 1;
-		blitRegion.srcOffsets[0] = { 0, 0, 0 };
-		blitRegion.srcOffsets[1] = { static_cast<int32_t>(swapChainExtent.width), static_cast<int32_t>(swapChainExtent.height), 1 };
+		blitRegion.srcSubresource = {
+			VK_IMAGE_ASPECT_COLOR_BIT,
+			0,
+			0,
+			1
+		};
 
-		// Destination subresource and region bounds (swapChainImages - 8Bit sRGB)
-		blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		blitRegion.dstSubresource.mipLevel = 0;
-		blitRegion.dstSubresource.baseArrayLayer = 0;
-		blitRegion.dstSubresource.layerCount = 1;
-		blitRegion.dstOffsets[0] = { 0, 0, 0 };
-		blitRegion.dstOffsets[1] = { static_cast<int32_t>(swapChainExtent.width), static_cast<int32_t>(swapChainExtent.height), 1 };
+		blitRegion.srcOffsets[0] = {
+			0, 0, 0
+		};
+
+		blitRegion.srcOffsets[1] = {
+			static_cast<int32_t>(swapChainExtent.width),
+			static_cast<int32_t>(swapChainExtent.height),
+			1
+		};
+
+		blitRegion.dstSubresource = {
+			VK_IMAGE_ASPECT_COLOR_BIT,
+			0,
+			0,
+			1
+		};
+
+		blitRegion.dstOffsets[0] = {
+			0, 0, 0
+		};
+
+		blitRegion.dstOffsets[1] = {
+			static_cast<int32_t>(swapChainExtent.width),
+			static_cast<int32_t>(swapChainExtent.height),
+			1
+		};
 
 		vkCmdBlitImage(
 			commandBuffer,
-			finalOutputImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			1, &blitRegion,
-			VK_FILTER_NEAREST // Use VK_FILTER_LINEAR if you are upscaling/downscaling dimensions
+			finalOutputImage,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			swapChainImages[imageIndex],
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1,
+			&blitRegion,
+			VK_FILTER_NEAREST
 		);
 
-		// Restore final compute image layout back to GENERAL for next frame
 		VkImageMemoryBarrier backToGeneralBarrier{};
-		backToGeneralBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		backToGeneralBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-		backToGeneralBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-		backToGeneralBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		backToGeneralBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		backToGeneralBarrier.image = finalOutputImage;
-		backToGeneralBarrier.subresourceRange = range;
-		backToGeneralBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-		backToGeneralBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+		backToGeneralBarrier.sType =
+			VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+
+		backToGeneralBarrier.oldLayout =
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+
+		backToGeneralBarrier.newLayout =
+			VK_IMAGE_LAYOUT_GENERAL;
+
+		backToGeneralBarrier.srcQueueFamilyIndex =
+			VK_QUEUE_FAMILY_IGNORED;
+
+		backToGeneralBarrier.dstQueueFamilyIndex =
+			VK_QUEUE_FAMILY_IGNORED;
+
+		backToGeneralBarrier.image =
+			finalOutputImage;
+
+		backToGeneralBarrier.subresourceRange =
+			range;
+
+		backToGeneralBarrier.srcAccessMask =
+			VK_ACCESS_TRANSFER_READ_BIT;
+
+		backToGeneralBarrier.dstAccessMask =
+			VK_ACCESS_SHADER_READ_BIT |
+			VK_ACCESS_SHADER_WRITE_BIT;
 
 		vkCmdPipelineBarrier(
 			commandBuffer,
 			VK_PIPELINE_STAGE_TRANSFER_BIT,
 			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			0, 0, nullptr, 0, nullptr,
-			1, &backToGeneralBarrier
+			0, 0, nullptr,
+			0, nullptr,
+			1,
+			&backToGeneralBarrier
 		);
 
 		// =========================================================================
 		// 4. IMGUI RENDER PASS
 		// =========================================================================
 		VkRenderPassBeginInfo renderPassInfo{};
-		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		renderPassInfo.renderPass = imguiRenderPass;
-		renderPassInfo.framebuffer = imguiFrameBuffers[imageIndex];
-		renderPassInfo.renderArea.offset = { 0, 0 };
-		renderPassInfo.renderArea.extent = swapChainExtent;
+		renderPassInfo.sType =
+			VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+		renderPassInfo.renderPass =
+			imguiRenderPass;
+
+		renderPassInfo.framebuffer =
+			imguiFrameBuffers[imageIndex];
+
+		renderPassInfo.renderArea.offset =
+		{ 0, 0 };
+
+		renderPassInfo.renderArea.extent =
+			swapChainExtent;
 
 		VkClearValue clearValue{};
-		clearValue.color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		clearValue.color =
+		{ {0.0f, 0.0f, 0.0f, 1.0f} };
 
-		renderPassInfo.clearValueCount = 1;
-		renderPassInfo.pClearValues = &clearValue;
+		renderPassInfo.clearValueCount =
+			1;
 
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 4);
+		renderPassInfo.pClearValues =
+			&clearValue;
 
-		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+		vkCmdWriteTimestamp(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			timeStampQueryPools[currentFrame],
+			4
+		);
+
+		vkCmdBeginRenderPass(
+			commandBuffer,
+			&renderPassInfo,
+			VK_SUBPASS_CONTENTS_INLINE
+		);
+
+		ImGui_ImplVulkan_RenderDrawData(
+			ImGui::GetDrawData(),
+			commandBuffer
+		);
+
 		vkCmdEndRenderPass(commandBuffer);
 
-		vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timeStampQueryPools[currentFrame], 5);
+		vkCmdWriteTimestamp(
+			commandBuffer,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			timeStampQueryPools[currentFrame],
+			5
+		);
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer");
@@ -5097,13 +5465,22 @@ private:
 
 	void processMouse(float deltaX, float deltaY)
 	{
-		camera.yaw += deltaX * camera.sensitivity;
+		// Clamp extreme deltas (e.g., from alt-tabbing or window focus jumps)
+		constexpr float MAX_DELTA = 50.0f;
+		deltaX = glm::clamp(deltaX, -MAX_DELTA, MAX_DELTA);
+		deltaY = glm::clamp(deltaY, -MAX_DELTA, MAX_DELTA);
+
+		if (std::abs(deltaX) < 1e-4f && std::abs(deltaY) < 1e-4f)
+		{
+			return;
+		}
+
+		camera.yaw -= deltaX * camera.sensitivity;
 		camera.pitch += deltaY * camera.sensitivity;
 
 		camera.pitch = glm::clamp(camera.pitch, glm::radians(-89.0f), glm::radians(89.0f));
 
 		updateCameraVectors();
-		frameCounter = 0;
 	}
 
 	bool processKeyboard(float deltaTime)
@@ -5121,11 +5498,11 @@ private:
 		}
 		if (left)
 		{
-			camera.position += camera.right * velocity;
+			camera.position -= camera.right * velocity;
 		}
 		if (right)
 		{
-			camera.position -= camera.right * velocity;
+			camera.position += camera.right * velocity;
 		}
 		if (up)
 		{
@@ -5139,41 +5516,50 @@ private:
 	}
 
 	// Store history per swapchain/in-flight frame
-	void updateUniformBuffer(uint32_t currentImage)
+	void updateUniformBuffer(uint32_t currentFrame, bool cameraMoved)
 	{
-		// Static vectors declared INSIDE the method to fix scope/syntax issues
-		static std::vector<glm::mat4> lastViews;
-		static std::vector<glm::mat4> lastProjs;
-		static bool initialized = false;
-
-		// Lazily initialize on the very first execution
-		if (!initialized)
-		{
-			glm::mat4 initialView = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-			glm::mat4 initialProj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
-			initialProj[1][1] *= -1;
-
-			lastViews.resize(maxFramesInFlight, initialView);
-			lastProjs.resize(maxFramesInFlight, initialProj);
-			initialized = true;
-		}
+		// History array sized to match maxFramesInFlight
+		static std::vector<glm::mat4> prevViews(maxFramesInFlight, glm::mat4(1.0f));
+		static std::vector<glm::mat4> prevProjs(maxFramesInFlight, glm::mat4(1.0f));
+		static bool historyInitialized = false;
 
 		uniformBufferObject ubo{};
-
-		// Assign history corresponding to THIS frame slot
-		ubo.prevView = lastViews[currentImage];
-		ubo.prevProj = lastProjs[currentImage];
-
 		ubo.model = glm::mat4(1.0f);
+
+		// 1. Current frame matrices
 		ubo.view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-		ubo.proj = glm::perspective(glm::radians(-60.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 512.f);
-		ubo.proj[1][1] *= -1;
 
-		// Save current frame's matrices to THIS frame slot's history
-		lastViews[currentImage] = ubo.view;
-		lastProjs[currentImage] = ubo.proj;
+		glm::mat4 cleanProj = glm::perspective(
+			glm::radians(60.0f),
+			swapChainExtent.width / static_cast<float>(swapChainExtent.height),
+			0.1f, 512.0f
+		);
+		cleanProj[1][1] *= -1.0f; // Vulkan Y-flip
 
-		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+		ubo.projUnjittered = cleanProj;
+		ubo.proj = cleanProj;
+
+		// 2. First-frame initialization for all buffers
+		if (!historyInitialized)
+		{
+			for (uint32_t i = 0; i < maxFramesInFlight; ++i)
+			{
+				prevViews[i] = ubo.view;
+				prevProjs[i] = ubo.projUnjittered;
+			}
+			historyInitialized = true;
+		}
+
+		// 3. Assign the exact previous matrix associated with this buffer index
+		ubo.prevView = prevViews[currentFrame];
+		ubo.prevProjUnjittered = prevProjs[currentFrame];
+
+		// 4. Copy to mapped UBO
+		memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
+
+		// 5. Store current matrix into this slot for its next cycle
+		prevViews[currentFrame] = ubo.view;
+		prevProjs[currentFrame] = ubo.projUnjittered;
 	}
 
 	void drawFrame()
@@ -5206,7 +5592,7 @@ private:
 			throw std::runtime_error("failed to acquire swap chain image");
 		}
 
-		updateUniformBuffer(currentFrame);
+		//updateUniformBuffer(currentFrame);
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
@@ -5340,7 +5726,6 @@ private:
 			throw std::runtime_error("failed to acquire swap chain image");
 		}
 
-
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float deltaTime = std::chrono::duration<float>(currentTime - startTime).count();
 		startTime = currentTime;
@@ -5352,23 +5737,32 @@ private:
 		up = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
 		down = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
 
-		bool moved = processKeyboard(deltaTime);
-		if (moved)
+		bool keyboardMoved = processKeyboard(deltaTime);
+
+		// Process accumulated mouse deltas strictly ONCE per frame loop
+		bool mouseMoved = false;
+		if (std::abs(accumulatedDeltaX) > 1e-4f || std::abs(accumulatedDeltaY) > 1e-4f)
 		{
-			frameCounter = 0;
-		}
-		else
-		{
-			frameCounter++;
+			processMouse(accumulatedDeltaX, accumulatedDeltaY);
+			accumulatedDeltaX = 0.0f; // Reset accumulator for next frame
+			accumulatedDeltaY = 0.0f;
+			mouseMoved = true;
 		}
 
-		updateUniformBuffer(currentFrame);
+		bool cameraMoved = keyboardMoved || mouseMoved;
+
+		// Do NOT reset frameCounter on movement for SVGF!
+		// Motion vectors inside the GLSL shader handle re-projection and local per-pixel history resets.
+		frameCounter++;
+		totalFrameCount++;
+
+		updateUniformBuffer(currentFrame, cameraMoved);
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 
-		recordRayTracingCommandBuffer(commandBuffers[currentFrame], imageIndex);
+		recordRayTracingCommandBuffer(commandBuffers[currentFrame], imageIndex, frameCounter, totalFrameCount);
 
 		VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
 		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };

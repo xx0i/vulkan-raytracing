@@ -119,7 +119,7 @@ void main()
     // ==================================================
     payload.primaryNormal = normal;
     payload.primaryAlbedo = mat.albedo.rgb;
-    payload.hitDistance   = gl_RayTmaxEXT;
+    payload.hitDistance   = gl_HitTEXT;
 
     // --------------------------------------------------
     // Emission

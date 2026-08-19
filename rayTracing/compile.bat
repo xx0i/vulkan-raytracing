@@ -1,5 +1,6 @@
 C:/VulkanSDK/1.4.309.0/Bin/glslangValidator.exe -V --target-env vulkan1.2 rayGen.rgen -o rgen.spv
 C:/VulkanSDK/1.4.309.0/Bin/glslangValidator.exe -V --target-env vulkan1.2 miss.rmiss -o rmiss.spv
+C:/VulkanSDK/1.4.309.0/Bin/glslangValidator.exe -V --target-env vulkan1.2 shadowMiss.rmiss -o shadowrmiss.spv
 C:/VulkanSDK/1.4.309.0/Bin/glslangValidator.exe -V --target-env vulkan1.2 closesthit.rchit -o rchit.spv
 C:/VulkanSDK/1.4.309.0/Bin/glslangValidator.exe -V -I. --target-env vulkan1.2 quadClosesthit.rchit -o quadrchit.spv
 C:/VulkanSDK/1.4.309.0/Bin/glslangValidator.exe -V -I. --target-env vulkan1.2 sphereClosesthit.rchit -o sphererchit.spv
