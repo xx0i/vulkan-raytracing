@@ -1,11 +1,13 @@
-﻿  main.cpp
+﻿  applicationBufferHelpers.cpp
   GLM_GTX_hash requires C++11 standard library support
-C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp(1298,45): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
-C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp(1306,71): warning C4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
-C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp(3037,43): warning C4305: 'initializing': truncation from 'double' to 'float'
-C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp(3365,21): warning C4267: '=': conversion from 'size_t' to 'uint32_t', possible loss of data
-C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp(5658,20): warning C4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
-C:\full sail\vulkan-raytracing\vulkan\vulkan\main.cpp(5665,81): warning C4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
+  applicationRender.cpp
+  GLM_GTX_hash requires C++11 standard library support
+C:\full sail\vulkan-raytracing\vulkan\vulkan\applicationRender.cpp(582,19): warning C4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
+C:\full sail\vulkan-raytracing\vulkan\vulkan\applicationRender.cpp(589,80): warning C4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
+  applicationSync.cpp
+  GLM_GTX_hash requires C++11 standard library support
+  Generating Code...
+LINK : warning LNK4098: defaultlib 'MSVCRT' conflicts with use of other libs; use /NODEFAULTLIB:library
   vulkan.vcxproj -> C:\full sail\vulkan-raytracing\vulkan\x64\Debug\vulkan.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.
