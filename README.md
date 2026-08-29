@@ -47,10 +47,10 @@ graph TD
 
 | Resolution | Total GPU Time | Ray Tracing Pass | Compute Pass | ImGui / Composite | Target FPS |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **720p** *(1280x720)* | **2.113 ms** | 0.819 ms | 1.287 ms | 0.007 ms | ~413.1 FPS |
-| **1080p** *(1920x1080)* | **4.884 ms** | 1.946 ms | 2.850 ms | 0.007 ms | ~164.5 FPS |
-| **1440p** *(2560x1440)* | **8.029 ms** | 3.571 ms | 4.451 ms | 0.007 ms | ~122.4 FPS |
-| **4K** *(3840x2160)* | **14.304 ms** | 7.045 ms | 7.252 ms | 0.007 ms | ~64.3 FPS |
+| **720p** *(1280x720)* | **2.113 ms** | 0.819 ms | 1.287 ms | 0.007 ms | ~473.3 FPS |
+| **1080p** *(1920x1080)* | **4.803 ms** | 1.946 ms | 2.850 ms | 0.007 ms | ~208.2 FPS |
+| **1440p** *(2560x1440)* | **8.029 ms** | 3.571 ms | 4.451 ms | 0.007 ms | ~124.5 FPS |
+| **4K** *(3840x2160)* | **14.304 ms** | 7.045 ms | 7.252 ms | 0.007 ms | ~69.9 FPS |
 
 * "Timestamps recorded using Vulkan VkQueryPool GPU timestamp queries (vkCmdWriteTimestamp2) around pass execution boundaries to eliminate CPU overhead."
 
