@@ -45,7 +45,6 @@ graph TD
 ## Performance Benchmarks
 *Benchmarked on [NVIDIA GeForce RTX 4070 Laptop GPU / Intel(R) UHD Graphics] | Cornell Box Scene | 1 SPP Path Tracing + 4 À-Trous Denoising Passes*
 
-RELEASE
 | Resolution | Total GPU Time | Ray Tracing Pass | Compute Pass | ImGui / Composite | Target FPS |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **720p** *(1280x720)* | **2.113 ms** | 0.819 ms | 1.287 ms | 0.007 ms | ~413.1 FPS |
