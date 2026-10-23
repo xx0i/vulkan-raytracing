@@ -1,6 +1,6 @@
 # Real-Time Vulkan Path Tracer & Wavelet Denoiser
 
-![Vulkan](https://img.shields.io/badge/Vulkan-1.4+-red.svg?logo=vulkan)
+![Vulkan](https://img.shields.io/badge/Vulkan-1.2+-red.svg?logo=vulkan)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=cplusplus)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg?logo=windows)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
@@ -52,11 +52,11 @@ graph TD
 | **1440p** *(2560x1440)* | **8.029 ms** | 3.571 ms | 4.451 ms | 0.007 ms | ~124.5 FPS |
 | **4K** *(3840x2160)* | **14.304 ms** | 7.045 ms | 7.252 ms | 0.007 ms | ~69.9 FPS |
 
-* "Timestamps recorded using Vulkan VkQueryPool GPU timestamp queries (vkCmdWriteTimestamp2) around pass execution boundaries to eliminate CPU overhead."
+* "Timestamps recorded using Vulkan VkQueryPool GPU timestamp queries (vkCmdWriteTimestamp) around pass execution boundaries to eliminate CPU overhead."
 
 ## Pass Breakdown Analysis
 * **Ray Tracing Scaling:** Primary ray dispatch and BVH traversal scale predictably near-linearly with total pixel count $O(N)$, going from 0.93 ms at 720p up to 8.02 ms at 4K.
-* **Denoiser Workload:** The compute pipeline (temporal integration + 4 à-trous wavelet passes) constitutes 48–55% of overall GPU execution time. At lower resolutions (720p/1080p), à-trous memory access patterns and dispatch overhead slightly outpace ray dispatch cost.
+* **Denoiser Workload:** The compute pipeline (temporal integration + 5 à-trous wavelet passes) constitutes 48–55% of overall GPU execution time. At lower resolutions (720p/1080p), à-trous memory access patterns and dispatch overhead slightly outpace ray dispatch cost.
 * **Workload Equalization:** Beyond 1440p, the ray tracing pass becomes the dominant bottleneck as BVH traversal cost surpasses image-space compute filtering ($8.02\text{ ms}$ RT vs $7.31\text{ ms}$ Compute at 4K).
 
 ## To run the project:
